@@ -17,10 +17,11 @@ int error_count = 0;
 // extra info for functions
 vector<SymbolInfo*>* cur_param_list; // define new in adding func, delete after adding to func sinfo
 bool in_function = false;
+
 string dummy_val = "-100"; // store dummy vals when params declared without id or when an error has occured
 // if an error has occured, store return type as dummy_val
 // this signals no need to show further errors
-
+string var_type = "-100"; // to store type of variables in declaration_list to match sample io
 
 void yyerror(char *s){
 	//write your code
@@ -29,6 +30,7 @@ void yyerror(char *s){
 	cout<<"Error at line "<<line_count<<": "<<s<<endl<<endl;
 	error_count += 1;
 }
+
 
 void print_vals(vector<SymbolInfo*>* vals){
 	string value, type;
@@ -48,10 +50,12 @@ void print_vals(vector<SymbolInfo*>* vals){
 	cout<<endl<<endl;
 }
 
+
 void rule_match(string rule, vector<SymbolInfo*>* vals){
 	cout<<"Line "<<line_count<<": "<<rule<<endl<<endl;
 	print_vals(vals);
 }
+
 
 vector<SymbolInfo*>* add_vals(vector<SymbolInfo*>* vec1, vector<SymbolInfo*>* vec2){
 	vec1->insert(vec1->end(), vec2->begin(), vec2->end());
@@ -59,19 +63,29 @@ vector<SymbolInfo*>* add_vals(vector<SymbolInfo*>* vec1, vector<SymbolInfo*>* ve
 	return vec1;
 }
 
+
 void print_error(string message){
 	fout<<"Error at line "<<line_count<<": "<<message<<endl<<endl;
 	cout<<"Error at line "<<line_count<<": "<<message<<endl<<endl;
 	error_count += 1;
 }
 
+
 //////////////////////////// HELPER FUNCTIONS /////////////////////////////////
 
-// helper to insert variables to param_list
+// helper to insert variables to param_list.
+// error handling:
+// 1. type cannot by void
+// 2. multiple declaration of var
 void insert_param(SymbolInfo* id, SymbolInfo* type){
+	if(type->getType() == "VOID"){
+		print_error("Variable type cannot be void");
+		return; 
+	}
+
 	if(cur_param_list == nullptr) cur_param_list = new vector<SymbolInfo*>();
 	for(int i=0; i<cur_param_list->size(); i++){
-		if(cur_param_list->at(i)->getName() == id->getName()) {
+		if(cur_param_list->at(i)->getName() == id->getName() && id->getName() != dummy_val) {
 			print_error("Multiple declaration of "+ id->getName() + " in parameter");
 			return; 
 		}
@@ -86,22 +100,26 @@ void insert_param(SymbolInfo* id, SymbolInfo* type){
 	// cout<<"Inserted "<<id->getName()<<" : "<<id->getType()<<endl;
 }
 
+
 // helper to insert variables in symbol table
-void insert_vars(SymbolInfo* id, SymbolInfo* type){
-	if(type->getType() == "VOID"){
-		print_error("Variable type cannot be void");
-		return; 
-	}
-	
+// error handling:
+// 1. type cannot by void -> handled directly in var_declaration rule according to sample io
+// 2. multiple declaration of var
+void insert_vars(SymbolInfo* id, string type){
+	// if(type == "VOID"){
+	// 	print_error("Variable type cannot be void");
+	// 	return; 
+	// }
+
 	bool success = st->insert(new SymbolInfo(
 		id->getName(),
 		id->getType(),
 		id->value_type,
-		type->getType()
+		type
 	));
 	if(!success) print_error("Multiple declaration of " + id->getName());
-
 }
+
 
 // helper for lcurl and rcurl
 void handle_lcurl(){
@@ -120,12 +138,18 @@ void handle_lcurl(){
 	}
 }
 
+
 void handle_rcurl(){
 	st->printAll();
 	st->exitScope();
 }
 
+
 // check whether parameters match
+// func_call = True means now checking in a function call. else checking in function declaration
+// error handling
+// 1: number of arguments mismatch
+// 2: ith argument type mismatch
 bool param_match(vector<SymbolInfo*>* func_params, vector<SymbolInfo*>* called_params, string func_name, bool func_call=false){
 	if(func_params == nullptr) func_params = new vector<SymbolInfo*>();
 	if(called_params == nullptr) called_params = new vector<SymbolInfo*>();
@@ -154,8 +178,13 @@ bool param_match(vector<SymbolInfo*>* func_params, vector<SymbolInfo*>* called_p
 
 
 // handle inserting a function into symbol table
+// if define=true then in definition, else in declaration
+// error handling:
+// 1: Multiple Declaration of Function
+// 2: Checks param_match errors
+// 3: Function return type mismatch
 void handle_func(SymbolInfo* id, SymbolInfo* return_type, bool define=true){
-	// insert function id first
+	// insert into function(id) additional info
 	SymbolInfo* temp = new SymbolInfo(id->getName(), id->getType());
 	temp->add_func_info("FUNC", return_type->getType(), cur_param_list, define);
 
@@ -167,6 +196,7 @@ void handle_func(SymbolInfo* id, SymbolInfo* return_type, bool define=true){
 		temp = st->lookUp(id->getName());
 		// if temp is not a function then it is something else . so multiple declaration
 		if(temp->value_type != "FUNC") print_error("Multiple declaration of " + temp->getName());
+		// if defined or already declared(exists in SymbolTable) and this is another declaration
 		else if(temp->func_defined || (!define)) print_error("Multiple declaration of " + temp->getName());
 		// if only declared not defined, then no error. But check consistency
 		else if(define) {
@@ -174,7 +204,7 @@ void handle_func(SymbolInfo* id, SymbolInfo* return_type, bool define=true){
 			temp->func_defined = true; // now defined
 
 			if(temp->return_type != return_type->getType()){
-				print_error("Return type mismatch with function declaration with " + temp->getName());
+				print_error("Return type mismatch with function declaration in function " + temp->getName());
 			}
 		}
 	}
@@ -186,6 +216,13 @@ void handle_func(SymbolInfo* id, SymbolInfo* return_type, bool define=true){
 	}
 }
 
+
+// check if id is declared
+// if error then return false and 'return_type' attribute will be dummy_val
+// error handling : 
+// 1: Undeclared variable
+// 2: Not a variable
+// 3: If array=true: check if id is array. Else check if id is not an array
 bool check_var_declared(SymbolInfo* id, bool array = false){
 	SymbolInfo* temp = st->lookUp(id->getName());
 	id->return_type = dummy_val; // store dummy type in case of error
@@ -216,11 +253,14 @@ bool check_var_declared(SymbolInfo* id, bool array = false){
 	return true;
 }
 
+
 // used when type cannot be void
 // no need to handle dummy_val here
+// error handling:
+// 1: expression cannot be void
 string check_void(string type){
 	if(type == "VOID"){
-		print_error("expression cannot be void"); // TODO
+		print_error("Void function used in expression"); // TODO
 		return dummy_val;
 	}
 	return type;
@@ -235,14 +275,15 @@ string check_void(string type){
 string handle_type(string type1, string type2, int choice=0, string message=""){
 	// check if already an error has occured
 	if(type1 == dummy_val || type2 == dummy_val) return dummy_val;
-	
-	// check for no void
-	if(choice == 1){
-		if(type1 == "VOID" || type2 == "VOID"){
-			print_error(message);
+	// check if any of the types are void
+	if(type1 == "VOID" || type2 == "VOID"){
+			print_error("Void function used in expression");
 			return dummy_val;
 		}
-		else return "INT";
+
+	// make return type int (void and prev_error checked)
+	if(choice == 1){
+		return "INT";
 	}
 	
 	// if integer is required in both operation
@@ -252,12 +293,7 @@ string handle_type(string type1, string type2, int choice=0, string message=""){
 
 	// for adding
 	if(choice == 3){
-		if((type1 != "INT" && type1 != "FLOAT") ||
-		   (type2 != "INT" && type2 != "FLOAT")){
-			   print_error(message);
-			   return dummy_val;
-		   }
-		else if(type1 != type2) return "FLOAT"; 
+		if(type1 != type2) return "FLOAT"; 
 	}
 
 	// if no match
@@ -316,7 +352,6 @@ program :
 		$$ = $1;
 		rule_match("program : unit", $$);
 	}
-	;
 
 
 unit : 
@@ -341,6 +376,7 @@ unit :
 func_declaration : 
 	type_specifier ID LPAREN parameter_list RPAREN SEMICOLON
 	{
+		// error handling : handle_func errors
 		handle_func($2, $1->at(0), false); // definition = false
 		cur_param_list = nullptr; // clear param for next use
 
@@ -354,6 +390,7 @@ func_declaration :
 	}
 	| type_specifier ID LPAREN RPAREN SEMICOLON
 	{
+		// error handling : handle_func errors
 		handle_func($2, $1->at(0), false); // definition = false
 
 		$1->insert($1->end(),  {$2, $3, $4, $5});
@@ -363,12 +400,41 @@ func_declaration :
 			$$
 		);
 	}
+	| type_specifier ID LPAREN parameter_list error RPAREN SEMICOLON
+	{
+		// ERROR RECOVERY : for single param in func dec
+		// error handling : handle_func errors
+		handle_func($2, $1->at(0), false); // definition = false
+		cur_param_list = nullptr; // clear param for next use
+
+		$1->insert($1->end(),  {$2, $3});
+		$$ = add_vals($1, $4);
+		$$->insert($$->end(), {$6, $7});
+		rule_match(
+			"func_declaration : type_specifier ID LPAREN parameter_list error RPAREN SEMICOLON",
+			$$
+		);
+	}
+	| type_specifier ID LPAREN error RPAREN SEMICOLON
+	{
+		// ERROR RECOVERY : error between ()
+		// error handling : handle_func errors
+		handle_func($2, $1->at(0), false); // definition = false
+
+		$1->insert($1->end(),  {$2, $3, $5, $6});
+		$$ = $$;
+		rule_match(
+			"func_declaration : type_specifier ID LPAREN error RPAREN SEMICOLON",
+			$$
+		);
+	}
 	;
 
 
 func_definition : 
 	type_specifier ID LPAREN parameter_list RPAREN{ handle_func($2, $1->at(0)); } compound_statement
 	{
+		// error handling : handle_func errors
 		cur_param_list = nullptr; // clear param for next use
 		in_function = false; // out of function
 		
@@ -383,6 +449,7 @@ func_definition :
 	}
 	| type_specifier ID LPAREN RPAREN{ handle_func($2, $1->at(0)); } compound_statement
 	{
+		// error handling : handle_func errors
 		in_function = false; // out of function
 
 		$1->insert($1->end(),  {$2, $3, $4});
@@ -392,9 +459,10 @@ func_definition :
 			$$
 		);
 	}
-	|
-	type_specifier ID LPAREN parameter_list error RPAREN{ handle_func($2, $1->at(0)); } compound_statement
+	| type_specifier ID LPAREN parameter_list error RPAREN{ handle_func($2, $1->at(0)); } compound_statement
 	{
+		// ERROR RECOVERY : for single params in func def
+		// error handling : handle_func errors
 		cur_param_list = nullptr; // clear param for next use
 		in_function = false; // out of function
 		
@@ -407,12 +475,26 @@ func_definition :
 			$$
 		);
 	}
+	| type_specifier ID LPAREN error RPAREN{ handle_func($2, $1->at(0)); } compound_statement
+	{
+		// ERROR RECOVERY : error between ()
+		// error handling : handle_func errors
+		in_function = false; // out of function
+
+		$1->insert($1->end(),  {$2, $3, $5});
+		$$ = add_vals($1, $7);
+		rule_match(
+			"func_definition : type_specifier ID LPAREN error RPAREN compound_statement",
+			$$
+		);
+	}
 	;				
 
 
 parameter_list  : 
 	parameter_list COMMA type_specifier ID
 	{
+		// error handling : insert_param errors
 		insert_param($4, $3->at(0)); 
 		
 		$1->push_back($2);
@@ -425,6 +507,7 @@ parameter_list  :
 	}
 	| parameter_list COMMA type_specifier
 	{
+		// error handling : insert_param errors
 		insert_param(new SymbolInfo(dummy_val, "ID"), $3->at(0)); // dummy variable name
 
 		$1->push_back($2);
@@ -436,6 +519,7 @@ parameter_list  :
 	}
 	| type_specifier ID
 	{
+		// error handling : insert_param errors
 		insert_param($2, $1->at(0)); 
 
 		$1->push_back($2);
@@ -447,11 +531,39 @@ parameter_list  :
 	}
 	| type_specifier
 	{
+		// error handling : insert_param errors
 		insert_param(new SymbolInfo(dummy_val, "ID"), $1->at(0)); // dummy variable name
 		
 		$$ = $1;
 		rule_match(
 			"parameter_list : type_specifier",
+			$$
+		);
+	}
+	| parameter_list error COMMA type_specifier ID
+	{
+		// ERROR RECOVERY : for multiple params
+		// error handling : insert_param errors
+		insert_param($5, $4->at(0)); 
+		
+		$1->push_back($3);
+		$$ = add_vals($1, $4);
+		$$->push_back($5);
+		rule_match(
+			"parameter_list : parameter_list error COMMA type_specifier ID",
+			$$
+		);
+	}
+	| parameter_list error COMMA type_specifier
+	{
+		// ERROR RECOVERY : for multiple params
+		// error handling : insert_param errors
+		insert_param(new SymbolInfo(dummy_val, "ID"), $4->at(0)); // dummy variable name
+
+		$1->push_back($3);
+		$$ = add_vals($1, $4);
+		rule_match(
+			"parameter_list : parameter_list error COMMA type_specifier",
 			$$
 		);
 	}
@@ -485,15 +597,25 @@ compound_statement :
 var_declaration : 
 	type_specifier declaration_list SEMICOLON
 	{
-		// insert into symbol table along with type
-		for(int i=0; i<$2->size(); i++){
-			if($2->at(i)->value_type == "VAR" || $2->at(i)->value_type == "ARRAY") 
-				insert_vars($2->at(i), $1->at(0)); 
-		}
+		// error handling
+		// handle variable void error here : according to sample io
+		if($1->at(0)->getType() == "VOID") print_error("Variable type cannot be void"); 
 
 		$$ = add_vals($1, $2);
 		$$->push_back($3);
 		rule_match("var_declaration : type_specifier declaration_list SEMICOLON", $$);
+	}
+	|
+	type_specifier declaration_list error SEMICOLON
+	{
+		// ERROR RECOVERY : for error before semicolon and after declaration_list
+		// error handling
+		// handle variable void error here : according to sample io
+		if($1->at(0)->getType() == "VOID") print_error("Variable type cannot be void"); 
+
+		$$ = add_vals($1, $2);
+		$$->push_back($4);
+		rule_match("var_declaration : type_specifier declaration_list error SEMICOLON", $$);
 	}
 	;	
 
@@ -501,16 +623,19 @@ var_declaration :
 type_specifier	: 
 	INT 
 	{
+		var_type = $1->getType(); // only needed to store for declaration list : to match sample io
 		$$ = new vector<SymbolInfo*>({$1});
 		rule_match("type_specifier : INT", $$);
 	}
 	| FLOAT 
 	{
+		var_type = $1->getType();
 		$$ = new vector<SymbolInfo*>({$1});
 		rule_match("type_specifier : FLOAT", $$);
 	}
 	| VOID 
 	{
+		var_type = $1->getType();
 		$$ = new vector<SymbolInfo*>({$1});
 		rule_match("type_specifier : VOID", $$);
 	}
@@ -520,16 +645,20 @@ type_specifier	:
 declaration_list : 
 	declaration_list COMMA ID 
 	{
+		// error handling : insert_vars errors
 		$3->value_type = "VAR";
 		$$ = add_vals($1, new vector<SymbolInfo*>({$2, $3}));
+		insert_vars($3, var_type); 
 		rule_match("declaration_list : declaration_list COMMA ID", $$);
 	}
 	| declaration_list COMMA ID LTHIRD CONST_INT RTHIRD
 	{
+		// error handling : insert_vars errors
 		$3->value_type = "ARRAY";
 		$$ = add_vals($1, new vector<SymbolInfo*>(
 			{$2, $3, $4, $5, $6}
 		));
+		insert_vars($3, var_type); 
 		rule_match(
 			"declaration_list : declaration_list COMMA ID LTHIRD CONST_INT RTHIRD", 
 			$$
@@ -537,30 +666,39 @@ declaration_list :
 	}
 	| ID 
 	{
+		// error handling : insert_vars errors
 		$1->value_type = "VAR";
-		$$ = new vector<SymbolInfo*>({$1}); 
+		$$ = new vector<SymbolInfo*>({$1});
+		insert_vars($1, var_type);  
 		rule_match("declaration_list : ID", $$); 
 	}
 	| ID LTHIRD CONST_INT RTHIRD 
 	{
+		// error handling : insert_vars errors
 		$1->value_type = "ARRAY";
 		$$ = new vector<SymbolInfo*>({$1, $2, $3, $4}); 
+		insert_vars($1, var_type); 
 		rule_match("declaration_list : ID LTHIRD CONST_INT RTHIRD", $$);
 	}
 	| 
 	declaration_list error COMMA ID
 	{
-		// error recovery 
+		// ERROR RECOVERY : error before comma var
+		// error handling : insert_vars errors
 		$4->value_type = "VAR";
 		$$ = add_vals($1, new vector<SymbolInfo*>({$3, $4}));
+		insert_vars($4, var_type); 
 		rule_match("declaration_list : declaration_list error COMMA ID", $$);
 	}
 	| declaration_list error COMMA ID LTHIRD CONST_INT RTHIRD
 	{
-		$3->value_type = "ARRAY";
+		// ERROR RECOVERY : error before comma array
+		// error handling : insert_vars errors
+		$4->value_type = "ARRAY";
 		$$ = add_vals($1, new vector<SymbolInfo*>(
 			{$3, $4, $5, $6, $7}
 		));
+		insert_vars($4, var_type); 
 		rule_match(
 			"declaration_list : declaration_list error COMMA ID LTHIRD CONST_INT RTHIRD", 
 			$$
@@ -663,6 +801,8 @@ statement :
 	}
 	| PRINTLN LPAREN ID RPAREN SEMICOLON
 	{
+		// error handling : 
+	    // 1: check declaration
 		check_var_declared($3);
 
 		$$ = new vector<SymbolInfo*>({$1, $2, $3, $4, $5});
@@ -678,6 +818,18 @@ statement :
 		$$->push_back($3);
 		rule_match(
 			"statement : RETURN expression SEMICOLON",
+			$$
+		);
+	}
+	| error expression_statement
+	{
+		// ERROR RECOVERY
+		// if an error occurs: bison disregards stack tokens and shifts next tokens to find a suitable erro rule
+		// yyclearin; // clears lookahead
+		yyerrok; // clears input tokens
+		$$ = $2;
+		rule_match(
+			"statement : error expression_statement",
 			$$
 		);
 	}
@@ -708,6 +860,8 @@ expression_statement :
 variable : 
 	ID 		
 	{
+		// error handling: 
+		// 1. check declaration
 		check_var_declared($1);
 
 		$$ = new vector<SymbolInfo*>({$1});
@@ -718,11 +872,15 @@ variable :
 	}
 	| ID LTHIRD expression RTHIRD 
 	{
+		// error handling: 
+		// 1. check declaration
+		// 2. expression here must be INT
+		if(check_var_declared($1, true)){
+			// if return type is dummy_val then already an error has occured so no need to show this
+			if(($3->at(0)->return_type != "INT") && ($3->at(0)->return_type != dummy_val))
+				print_error("Expression inside third brackets not an integer");
 
-		check_var_declared($1, true);
-		// if return type is dummy_val then already an error has occured so no need to show this
-		if(($3->at(0)->return_type != "INT") && ($3->at(0)->return_type != dummy_val))
-		 	print_error("Expression inside third brackets not an integer");
+		}
 
 		$$ = new vector<SymbolInfo*>({$1, $2});
 		$$ = add_vals($$, $3);
@@ -746,16 +904,23 @@ variable :
 	}
 	| variable ASSIGNOP logic_expression 	
 	{
-		// check whether right side is void or not
-		$3->at(0)->return_type = check_void(
-			$3->at(0)->return_type
-		);
+		// error handling:
+		// 1: L.H.S error
+		// 2: R.H.S void
+		// 3: Type Mismatch
+		// if no variable error 
+		if($1->at(0)->return_type != dummy_val){
+			// check whether right side is void or not
+			$3->at(0)->return_type = check_void(
+				$3->at(0)->return_type
+			);
 
-		// if not void then check for mismatch
-		$1->at(0)->return_type = handle_type(
-			$1->at(0)->return_type, 
-			$3->at(0)->return_type
-		);
+			// if not void then check for mismatch
+			$1->at(0)->return_type = handle_type(
+				$1->at(0)->return_type, 
+				$3->at(0)->return_type
+			);
+		}
 	
 
 		$$ = $1;
@@ -779,11 +944,13 @@ logic_expression :
 	}
 	| rel_expression LOGICOP rel_expression 	
 	{
+		// error handling:
+		// 1: check if either L.H.S or R.H.S is void
 		$1->at(0)->return_type = handle_type(
 			$1->at(0)->return_type, 
 			$3->at(0)->return_type,
 			1, 
-			"Non-integer result of LOGICOP"
+			"" //"Non-Integer result of LOGICOP"
 		);
 
 		$$ = $1;
@@ -808,11 +975,13 @@ rel_expression	:
 	}
 	| simple_expression RELOP simple_expression	
 	{
+		// error handling:
+		// 1: check if either L.H.S or R.H.S is void
 		$1->at(0)->return_type = handle_type(
 			$1->at(0)->return_type, 
 			$3->at(0)->return_type,
 			1,
-			"Non-integer result of RELOP"
+			"" //"Non-integer result of RELOP"
 		);
 
 		$$ = $1;
@@ -837,11 +1006,13 @@ simple_expression :
 	}
 	| simple_expression ADDOP term 
 	{
+		// error handling:
+		// 1: Check if either L.H.S or R.H.S is void and type compatibility
 		$1->at(0)->return_type = handle_type(
 			$1->at(0)->return_type, 
 			$3->at(0)->return_type,
 			3,
-			"Incompatible type in ADDOP"
+			"" //"Incompatible type in ADDOP"
 		);
 
 		$$ = $1;
@@ -852,7 +1023,29 @@ simple_expression :
 			$$
 		);
 	}
-	;
+	/* | simple_expression ADDOP error term 
+	{
+		yyclearin;
+		yyerrok;
+		// ERROR RECOVERY
+		// error handling:
+		// 1: Check if either L.H.S or R.H.S is void and type compatibility
+		$1->at(0)->return_type = handle_type(
+			$1->at(0)->return_type, 
+			$4->at(0)->return_type,
+			3,
+			"" //"Incompatible type in ADDOP"
+		);
+
+		$$ = $1;
+		$$->push_back($2);
+		$$ = add_vals($$, $4);
+		rule_match(
+			"simple_expression : simple_expression ADDOP error term",
+			$$
+		);
+	}
+	; */
 
 
 term :	
@@ -866,11 +1059,15 @@ term :
 	}
 	|  term MULOP unary_expression
 	{
+		// error handling
+		// 1: Check if either L.H.S or R.H.S is void and type compatibility
+		// 2: Non-integer operand for %
+		// 3: Modulus by zero
 		int choice = 3;
-		string message = "Incompatible type in MULOP";
+		string message = ""; // "Incompatible type in MULOP";
 		if($2->getName() == "%"){
 			choice = 2;
-			message = "Non Integer operand on modulus operator";
+			message = "Non-Integer operand on modulus operator";
 		}
 
 		$1->at(0)->return_type = handle_type(
@@ -902,6 +1099,8 @@ term :
 unary_expression : 
 	ADDOP unary_expression  
 	{
+		// error handling
+		// 1: check if void
 		$1->return_type = check_void(
 			$2->at(0)->return_type
 		);
@@ -915,6 +1114,8 @@ unary_expression :
 	}
 	| NOT unary_expression 
 	{
+		// error handling
+		// 1: check if void
 		$1->return_type = check_void(
 			$2->at(0)->return_type
 		);
@@ -948,6 +1149,9 @@ factor	:
 	}
 	| ID LPAREN argument_list RPAREN
 	{
+		// error handling:
+		// 1: ID is a function or not
+		// 2: if parameter no, type, sequence match
 		// check if called ID is a function
 		SymbolInfo* temp = st->lookUp($1->getName());
 		if(temp == nullptr){
