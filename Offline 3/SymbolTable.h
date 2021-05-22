@@ -137,6 +137,10 @@ public:
     // helpers
     string getName();
     int trackId();
+    string getCurrID() {
+        if(this->currTable != nullptr) return this->currTable->getID();
+        return "";
+    }
 
     // functions required
     void enterScope();

@@ -10,7 +10,7 @@ int yylex(void);
 extern FILE *yyin;
 ofstream fout("1705044_error.txt");
 
-SymbolTable *st = new SymbolTable(30);
+SymbolTable *st;
 int line_count = 1;
 int error_count = 0;
 
@@ -125,7 +125,6 @@ void insert_vars(SymbolInfo* id, string type){
 void handle_lcurl(){
 	// enter scope
 	st->enterScope();
-
 	// insert params if available and this is lcurl of a function
 	if (in_function && cur_param_list != nullptr) {
 		SymbolInfo* temp;
@@ -136,6 +135,7 @@ void handle_lcurl(){
 				// if(!success) print_error("Multiple declaration of "+ temp->getName() + " in parameter"); // TODO
 			}
 	}
+
 }
 
 
@@ -169,6 +169,11 @@ bool param_match(vector<SymbolInfo*>* func_params, vector<SymbolInfo*>* called_p
 		// dummy val error already caught
 		if(called_params->at(i)->return_type == dummy_val) continue;
 		if(func_params->at(i)->return_type != called_params->at(i)->return_type){
+			
+			// if float = int then okay?
+			if(func_params->at(i)->return_type == "FLOAT" && called_params->at(i)->return_type == "INT") 
+				continue;
+
 			print_error(to_string(i+1) + "th argument mismatch " + declaration_message);
 			return false;
 		}
@@ -179,13 +184,31 @@ bool param_match(vector<SymbolInfo*>* func_params, vector<SymbolInfo*>* called_p
 
 // handle inserting a function into symbol table
 // if define=true then in definition, else in declaration
+// bonus task : invalid scoping of function
 // error handling:
-// 1: Multiple Declaration of Function
-// 2: Checks param_match errors
-// 3: Function return type mismatch
+// 1: No param with no name if in definition -> return type becomes dummy
+// 2: Multiple Declaration of Function
+// 3: Checks param_match errors
+// 4: Function return type mismatch
 void handle_func(SymbolInfo* id, SymbolInfo* return_type, bool define=true){
+	// check if in global scope
+	if (st->getCurrID() != "1") return;
+
 	// insert into function(id) additional info
 	SymbolInfo* temp = new SymbolInfo(id->getName(), id->getType());
+
+	// handle param with no name if in definition
+	if(define && cur_param_list != nullptr){
+		for(int i=0; i<cur_param_list->size(); i++){
+			if(cur_param_list->at(i)->getName() == dummy_val){
+				print_error(to_string(i+1) + "th parameter's name not given in function definition of " + id->getName());
+				temp->add_func_info("FUNC", dummy_val, new vector<SymbolInfo*>(), false); // replace return type with dummy_val
+				st->insert(temp);
+				return ;
+			}
+		}
+	}
+		
 	temp->add_func_info("FUNC", return_type->getType(), cur_param_list, define);
 
 	// handle multiple declaration
@@ -317,7 +340,7 @@ string handle_type(string type1, string type2, int choice=0, string message=""){
 %type <vec> start program unit func_declaration func_definition parameter_list compound_statement
 %type <vec> var_declaration type_specifier declaration_list statements statement expression_statement
 %type <vec> variable expression logic_expression rel_expression simple_expression term unary_expression
-%type <vec> factor argument_list arguments
+%type <vec> factor argument_list arguments enter_lcurl 
 
 %start start
 
@@ -327,7 +350,6 @@ string handle_type(string type1, string type2, int choice=0, string message=""){
 
 %nonassoc LOWER_THAN_ELSE
 %nonassoc ELSE 
-
 
 %%
 
@@ -352,6 +374,12 @@ program :
 		$$ = $1;
 		rule_match("program : unit", $$);
 	}
+	/* | program error unit 
+	{
+		$$ = add_vals($1, $3);
+		rule_match("program : program error unit", $$);
+	}
+	; */
 
 
 unit : 
@@ -370,6 +398,24 @@ unit :
 		$$ = $1;
 		rule_match("unit : func_definition", $$);
 	}
+	/* | error var_declaration
+	{
+		// ERROR RECOVERY : isn't working for some reason :( getting caught in another error
+		$$ = $2;
+		rule_match("unit : error var_declaration", $$);
+	}
+	| error func_declaration
+	{
+		// ERROR RECOVERY
+		$$ = $2;
+		rule_match("unit : error func_declaration", $$);
+	}
+	| error func_definition
+	{
+		// ERROR RECOVERY
+		$$ = $2;
+		rule_match("unit : error func_definition", $$);
+	} */
 	;
 
 
@@ -400,7 +446,7 @@ func_declaration :
 			$$
 		);
 	}
-	| type_specifier ID LPAREN parameter_list error RPAREN SEMICOLON
+	/* | type_specifier ID LPAREN parameter_list error RPAREN SEMICOLON
 	{
 		// ERROR RECOVERY : for single param in func dec
 		// error handling : handle_func errors
@@ -427,7 +473,7 @@ func_declaration :
 			"func_declaration : type_specifier ID LPAREN error RPAREN SEMICOLON",
 			$$
 		);
-	}
+	} */
 	;
 
 
@@ -570,8 +616,10 @@ parameter_list  :
 	;
 
 
+enter_lcurl : { handle_lcurl(); } ;
+
 compound_statement : 
-	LCURL{ handle_lcurl();} statements RCURL
+	LCURL enter_lcurl statements RCURL
 	{
 		$$ = new vector<SymbolInfo*>({$1});
 		$$ = add_vals($$, $3);
@@ -582,11 +630,44 @@ compound_statement :
 		); 
 		handle_rcurl();
 	}
-	| LCURL{ handle_lcurl(); } RCURL
+	| LCURL enter_lcurl RCURL
 	{
 		$$ = new vector<SymbolInfo*>({$1, $3});
 		rule_match(
 			"compound_statement : LCURL RCURL",
+			$$
+		);
+		handle_rcurl();
+	}
+	| LCURL enter_lcurl error statements  RCURL
+	{
+		$$ = new vector<SymbolInfo*>({$1});
+		$$ = add_vals($$, $4);
+		$$->push_back($5);
+		rule_match(
+			"compound_statement : LCURL error statements  RCURL",
+			$$
+		); 
+		handle_rcurl();
+	}
+	| LCURL enter_lcurl statements error RCURL 
+	{
+		$$ = new vector<SymbolInfo*>({$1});
+		$$ = add_vals($$, $3);
+		$$->push_back($5);
+		rule_match(
+			"compound_statement : LCURL statements error RCURL",
+			$$
+		); 
+		handle_rcurl();
+	}
+	| LCURL enter_lcurl error RCURL
+	{
+		// yyclearin;
+		// yyerrok;
+		$$ = new vector<SymbolInfo*>({$1, $4});
+		rule_match(
+			"compound_statement : LCURL error RCURL",
 			$$
 		);
 		handle_rcurl();
@@ -605,8 +686,7 @@ var_declaration :
 		$$->push_back($3);
 		rule_match("var_declaration : type_specifier declaration_list SEMICOLON", $$);
 	}
-	|
-	type_specifier declaration_list error SEMICOLON
+	| type_specifier declaration_list error SEMICOLON
 	{
 		// ERROR RECOVERY : for error before semicolon and after declaration_list
 		// error handling
@@ -680,8 +760,7 @@ declaration_list :
 		insert_vars($1, var_type); 
 		rule_match("declaration_list : ID LTHIRD CONST_INT RTHIRD", $$);
 	}
-	| 
-	declaration_list error COMMA ID
+	| declaration_list error COMMA ID
 	{
 		// ERROR RECOVERY : error before comma var
 		// error handling : insert_vars errors
@@ -704,6 +783,15 @@ declaration_list :
 			$$
 		);
 	}
+	| ID LTHIRD CONST_INT error RTHIRD 
+	{
+		// ERROR RECOVERY
+		// error handling : insert_vars errors
+		$1->value_type = "ARRAY";
+		$$ = new vector<SymbolInfo*>({$1, $2, $3, $5}); 
+		insert_vars($1, var_type); 
+		rule_match("declaration_list : ID LTHIRD CONST_INT error RTHIRD", $$);
+	}
 	;
 
 
@@ -724,7 +812,16 @@ statements :
 			$$
 		);
 	}
+	| statements error {print_vals($1);} statement
+	{
+		$$ = add_vals($1, $4);
+		rule_match(
+			"statements : statements error statement",
+			$$
+		);
+	}
 	;
+
 
 statement : 
 	var_declaration
@@ -821,17 +918,17 @@ statement :
 			$$
 		);
 	}
-	| error expression_statement
+	| func_declaration
 	{
-		// ERROR RECOVERY
-		// if an error occurs: bison disregards stack tokens and shifts next tokens to find a suitable erro rule
-		// yyclearin; // clears lookahead
-		yyerrok; // clears input tokens
-		$$ = $2;
-		rule_match(
-			"statement : error expression_statement",
-			$$
-		);
+		// NEW BONUS
+		$$ = new vector<SymbolInfo*>();
+		print_error("Cannot declare function inside a function");
+	}
+	| func_definition 
+	{
+		// NEW BONUS
+		$$ = new vector<SymbolInfo*>();
+		print_error("Cannot define function inside a function");
 	}
 	;
 
@@ -890,6 +987,27 @@ variable :
 			$$
 		);
 	}
+	/* | ID LTHIRD expression error RTHIRD 
+	{
+		// ERROR RECOVERY
+		// error handling: 
+		// 1. check declaration
+		// 2. expression here must be INT
+		if(check_var_declared($1, true)){
+			// if return type is dummy_val then already an error has occured so no need to show this
+			if(($3->at(0)->return_type != "INT") && ($3->at(0)->return_type != dummy_val))
+				print_error("Expression inside third brackets not an integer");
+
+		}
+
+		$$ = new vector<SymbolInfo*>({$1, $2});
+		$$ = add_vals($$, $3);
+		$$->push_back($5);
+		rule_match(
+			"variable : ID LTHIRD expression error RTHIRD",
+			$$
+		);
+	} */
 	;
 	 
 
@@ -921,7 +1039,6 @@ variable :
 				$3->at(0)->return_type
 			);
 		}
-	
 
 		$$ = $1;
 		$$->push_back($2);
@@ -931,6 +1048,7 @@ variable :
 			$$
 		);
 	}
+	;
 
 
 logic_expression : 
@@ -1025,8 +1143,6 @@ simple_expression :
 	}
 	/* | simple_expression ADDOP error term 
 	{
-		yyclearin;
-		yyerrok;
 		// ERROR RECOVERY
 		// error handling:
 		// 1: Check if either L.H.S or R.H.S is void and type compatibility
@@ -1044,8 +1160,8 @@ simple_expression :
 			"simple_expression : simple_expression ADDOP error term",
 			$$
 		);
-	}
-	; */
+	} */
+	;
 
 
 term :	
@@ -1150,12 +1266,12 @@ factor	:
 	| ID LPAREN argument_list RPAREN
 	{
 		// error handling:
-		// 1: ID is a function or not
+		// 1: ID is a defined function or not
 		// 2: if parameter no, type, sequence match
 		// check if called ID is a function
 		SymbolInfo* temp = st->lookUp($1->getName());
-		if(temp == nullptr){
-			print_error("Undeclared function " + $1->getName());
+		if(temp == nullptr || (!temp->func_defined)){
+			print_error("Undefined function " + $1->getName());
 			$1->return_type = dummy_val;
 		}
 		else if(temp->value_type != "FUNC") {
@@ -1284,6 +1400,7 @@ arguments :
 
 int main(int argc,char *argv[])
 {
+	st = new SymbolTable(30);
 	FILE *fp;
 	if((fp=fopen(argv[1],"r"))==NULL)
 	{
@@ -1313,6 +1430,11 @@ int main(int argc,char *argv[])
 	fout.close();
 	/* fclose(fp2);
 	fclose(fp3); */
+	
+	
+	/* delete yyin, fp; */
+	delete st;
+	delete cur_param_list;
 	
 	return 0;
 }
