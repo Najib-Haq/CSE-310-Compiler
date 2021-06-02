@@ -398,24 +398,6 @@ unit :
 		$$ = $1;
 		rule_match("unit : func_definition", $$);
 	}
-	/* | error var_declaration
-	{
-		// ERROR RECOVERY : isn't working for some reason :( getting caught in another error
-		$$ = $2;
-		rule_match("unit : error var_declaration", $$);
-	}
-	| error func_declaration
-	{
-		// ERROR RECOVERY
-		$$ = $2;
-		rule_match("unit : error func_declaration", $$);
-	}
-	| error func_definition
-	{
-		// ERROR RECOVERY
-		$$ = $2;
-		rule_match("unit : error func_definition", $$);
-	} */
 	;
 
 
@@ -446,7 +428,7 @@ func_declaration :
 			$$
 		);
 	}
-	/* | type_specifier ID LPAREN parameter_list error RPAREN SEMICOLON
+	| type_specifier ID LPAREN parameter_list error RPAREN SEMICOLON
 	{
 		// ERROR RECOVERY : for single param in func dec
 		// error handling : handle_func errors
@@ -473,7 +455,37 @@ func_declaration :
 			"func_declaration : type_specifier ID LPAREN error RPAREN SEMICOLON",
 			$$
 		);
-	} */
+	}
+	| type_specifier ID LPAREN parameter_list RPAREN error
+	{
+		// ERROR RECOVERY : if no semicolon in the end
+		// error handling : handle_func errors
+		handle_func($2, $1->at(0), false); // definition = false
+		cur_param_list = nullptr; // clear param for next use
+		SymbolInfo* temp = new SymbolInfo(";","SEMICOLON"); // include a semicolon
+
+		$1->insert($1->end(),  {$2, $3});
+		$$ = add_vals($1, $4);
+		$$->insert($$->end(), {$5, temp});
+		rule_match(
+			"func_declaration : type_specifier ID LPAREN parameter_list RPAREN error",
+			$$
+		);
+	}
+	| type_specifier ID LPAREN RPAREN error
+	{
+		// ERROR RECOVERY : if no semicolon in the end
+		// error handling : handle_func errors
+		handle_func($2, $1->at(0), false); // definition = false
+		SymbolInfo* temp = new SymbolInfo(";","SEMICOLON"); // include a semicolon
+
+		$1->insert($1->end(),  {$2, $3, $4, temp});
+		$$ = $$;
+		rule_match(
+			"func_declaration : type_specifier ID LPAREN RPAREN error",
+			$$
+		);
+	}
 	;
 
 
@@ -812,9 +824,9 @@ statements :
 			$$
 		);
 	}
-	| statements error {print_vals($1);} statement
+	| statements error statement
 	{
-		$$ = add_vals($1, $4);
+		$$ = add_vals($1, $3);
 		rule_match(
 			"statements : statements error statement",
 			$$
@@ -1410,15 +1422,6 @@ int main(int argc,char *argv[])
 
 	freopen("1705044_log.txt", "w", stdout);
 
-	/* fp2= fopen(argv[2],"w");
-	fclose(fp2);
-	fp3= fopen(argv[3],"w");
-	fclose(fp3);
-	
-	fp2= fopen(argv[2],"a");
-	fp3= fopen(argv[3],"a"); */
-	
-
 	yyin=fp;
 	yyparse();
 	
@@ -1428,11 +1431,10 @@ int main(int argc,char *argv[])
 	cout<<"Total errors: "<<error_count<<endl;
 	fout<<"Total errors: "<<error_count<<endl;
 	fout.close();
-	/* fclose(fp2);
-	fclose(fp3); */
+	fclose(fp);
 	
 	
-	/* delete yyin, fp; */
+	/* delete yyin; */
 	delete st;
 	delete cur_param_list;
 	
