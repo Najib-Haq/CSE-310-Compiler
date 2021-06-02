@@ -378,8 +378,8 @@ program :
 	{
 		$$ = add_vals($1, $3);
 		rule_match("program : program error unit", $$);
-	}
-	; */
+	} */
+	;
 
 
 unit : 
