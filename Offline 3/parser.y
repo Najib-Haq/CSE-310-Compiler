@@ -78,12 +78,13 @@ void print_error(string message){
 // 1. type cannot by void
 // 2. multiple declaration of var
 void insert_param(SymbolInfo* id, SymbolInfo* type){
+	if(cur_param_list == nullptr) cur_param_list = new vector<SymbolInfo*>();
+	
 	if(type->getType() == "VOID"){
 		print_error("Variable type cannot be void");
 		return; 
 	}
 
-	if(cur_param_list == nullptr) cur_param_list = new vector<SymbolInfo*>();
 	for(int i=0; i<cur_param_list->size(); i++){
 		if(cur_param_list->at(i)->getName() == id->getName() && id->getName() != dummy_val) {
 			print_error("Multiple declaration of "+ id->getName() + " in parameter");
@@ -374,11 +375,12 @@ program :
 		$$ = $1;
 		rule_match("program : unit", $$);
 	}
-	/* | program error unit 
+	| program error unit 
 	{
+		// ERROR RECOVERY : high level error recovery
 		$$ = add_vals($1, $3);
 		rule_match("program : program error unit", $$);
-	} */
+	}
 	;
 
 
@@ -430,7 +432,7 @@ func_declaration :
 	}
 	| type_specifier ID LPAREN parameter_list error RPAREN SEMICOLON
 	{
-		// ERROR RECOVERY : for single param in func dec
+		// ERROR RECOVERY : for error after some param_list in func dec
 		// error handling : handle_func errors
 		handle_func($2, $1->at(0), false); // definition = false
 		cur_param_list = nullptr; // clear param for next use
@@ -653,6 +655,7 @@ compound_statement :
 	}
 	| LCURL enter_lcurl error statements  RCURL
 	{
+		// ERROR RECOVERY : 1st statement is wrong
 		$$ = new vector<SymbolInfo*>({$1});
 		$$ = add_vals($$, $4);
 		$$->push_back($5);
@@ -664,6 +667,7 @@ compound_statement :
 	}
 	| LCURL enter_lcurl statements error RCURL 
 	{
+		// ERROR RECOVERY : last statement is wrong
 		$$ = new vector<SymbolInfo*>({$1});
 		$$ = add_vals($$, $3);
 		$$->push_back($5);
@@ -675,6 +679,7 @@ compound_statement :
 	}
 	| LCURL enter_lcurl error RCURL
 	{
+		// ERROR RECOVERY : only wrong statement
 		// yyclearin;
 		// yyerrok;
 		$$ = new vector<SymbolInfo*>({$1, $4});
@@ -999,27 +1004,6 @@ variable :
 			$$
 		);
 	}
-	/* | ID LTHIRD expression error RTHIRD 
-	{
-		// ERROR RECOVERY
-		// error handling: 
-		// 1. check declaration
-		// 2. expression here must be INT
-		if(check_var_declared($1, true)){
-			// if return type is dummy_val then already an error has occured so no need to show this
-			if(($3->at(0)->return_type != "INT") && ($3->at(0)->return_type != dummy_val))
-				print_error("Expression inside third brackets not an integer");
-
-		}
-
-		$$ = new vector<SymbolInfo*>({$1, $2});
-		$$ = add_vals($$, $3);
-		$$->push_back($5);
-		rule_match(
-			"variable : ID LTHIRD expression error RTHIRD",
-			$$
-		);
-	} */
 	;
 	 
 
@@ -1153,26 +1137,6 @@ simple_expression :
 			$$
 		);
 	}
-	/* | simple_expression ADDOP error term 
-	{
-		// ERROR RECOVERY
-		// error handling:
-		// 1: Check if either L.H.S or R.H.S is void and type compatibility
-		$1->at(0)->return_type = handle_type(
-			$1->at(0)->return_type, 
-			$4->at(0)->return_type,
-			3,
-			"" //"Incompatible type in ADDOP"
-		);
-
-		$$ = $1;
-		$$->push_back($2);
-		$$ = add_vals($$, $4);
-		rule_match(
-			"simple_expression : simple_expression ADDOP error term",
-			$$
-		);
-	} */
 	;
 
 
