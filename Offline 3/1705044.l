@@ -36,8 +36,8 @@ void err_out(string type, string lexeme, int line=0){
 	int line_no = line_count;
 	if (line != 0) line_no = line; // to handle orig line of str and comments
 
-	cout<<"Lexical Error at line no "<<line_no<<": "<<type<<" "<<lexeme<<endl<<endl;
-	fout<<"Lexical Error at line no "<<line_no<<": "<<type<<" "<<lexeme<<endl<<endl;
+	cout<<"Error at line "<<line_no<<": "<<type<<" "<<lexeme<<endl<<endl;
+	fout<<"Error at line "<<line_no<<": "<<type<<" "<<lexeme<<endl<<endl;
 }
 
 
@@ -108,14 +108,17 @@ printf              {return output(PRINTLN, "PRINTLN", yytext);}
 {Number}*(\.{Number}+)(\.{Number}*)+ {
 						err_out("Too many decimal points",yytext);
 						error_count++;  
+						return output(CONST_FLOAT, "CONST_FLOAT",yytext);
 					}
 {Number}+(({Number}\.{Number}*)*)?([Ee][+-]?(\.?{Number}*)*)* {
 						err_out("Ill formed number",yytext);
 						error_count++;
+						return output(CONST_FLOAT, "CONST_FLOAT",yytext);
 					}					   
 {Number}+((\.{Number}*)*)?([Ee][+-]?(\.?{Number}*)*)*{Alphabet_}+{AlphaNumeric_}* {
 						err_out("Invalid prefix on ID or invalid suffix on Number",yytext);
 						error_count++;  
+						return output(ID, "ID", yytext);
 					}   
 
 

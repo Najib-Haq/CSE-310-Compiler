@@ -8,7 +8,7 @@ using namespace std;
 int yyparse(void);
 int yylex(void);
 extern FILE *yyin;
-ofstream fout("1705044_error.txt");
+ofstream fout("error.txt");
 
 SymbolTable *st;
 int line_count = 1;
@@ -53,7 +53,7 @@ void print_vals(vector<SymbolInfo*>* vals){
 
 void rule_match(string rule, vector<SymbolInfo*>* vals){
 	cout<<"Line "<<line_count<<": "<<rule<<endl<<endl;
-	print_vals(vals);
+	if (vals != nullptr) print_vals(vals);
 }
 
 
@@ -107,10 +107,10 @@ void insert_param(SymbolInfo* id, SymbolInfo* type){
 // 1. type cannot by void -> handled directly in var_declaration rule according to sample io
 // 2. multiple declaration of var
 void insert_vars(SymbolInfo* id, string type){
-	// if(type == "VOID"){
-	// 	print_error("Variable type cannot be void");
-	// 	return; 
-	// }
+	if(type == "VOID"){
+		// print_error("Variable type cannot be void");
+		return; 
+	}
 
 	bool success = st->insert(new SymbolInfo(
 		id->getName(),
@@ -358,7 +358,7 @@ start :
 	program
 	{
 		$$ = $1;
-		rule_match("start : program", $1);
+		rule_match("start : program", nullptr);
 		delete $$;
 	}
 	;
@@ -379,7 +379,7 @@ program :
 	{
 		// ERROR RECOVERY : high level error recovery
 		$$ = add_vals($1, $3);
-		rule_match("program : program error unit", $$);
+		rule_match("program : program unit", $$);
 	}
 	;
 
@@ -417,6 +417,10 @@ func_declaration :
 			"func_declaration : type_specifier ID LPAREN parameter_list RPAREN SEMICOLON",
 			$$
 		);
+
+		// to match log table no
+		st->enterScope();
+		st->exitScope();
 	}
 	| type_specifier ID LPAREN RPAREN SEMICOLON
 	{
@@ -429,6 +433,10 @@ func_declaration :
 			"func_declaration : type_specifier ID LPAREN RPAREN SEMICOLON",
 			$$
 		);
+
+		// to match log table no
+		st->enterScope();
+		st->exitScope();
 	}
 	| type_specifier ID LPAREN parameter_list error RPAREN SEMICOLON
 	{
@@ -441,9 +449,13 @@ func_declaration :
 		$$ = add_vals($1, $4);
 		$$->insert($$->end(), {$6, $7});
 		rule_match(
-			"func_declaration : type_specifier ID LPAREN parameter_list error RPAREN SEMICOLON",
+			"func_declaration : type_specifier ID LPAREN parameter_list RPAREN SEMICOLON",
 			$$
 		);
+
+		// to match log table no
+		st->enterScope();
+		st->exitScope();
 	}
 	| type_specifier ID LPAREN error RPAREN SEMICOLON
 	{
@@ -454,9 +466,13 @@ func_declaration :
 		$1->insert($1->end(),  {$2, $3, $5, $6});
 		$$ = $$;
 		rule_match(
-			"func_declaration : type_specifier ID LPAREN error RPAREN SEMICOLON",
+			"func_declaration : type_specifier ID LPAREN RPAREN SEMICOLON",
 			$$
 		);
+
+		// to match log table no
+		st->enterScope();
+		st->exitScope();
 	}
 	| type_specifier ID LPAREN parameter_list RPAREN error
 	{
@@ -470,9 +486,13 @@ func_declaration :
 		$$ = add_vals($1, $4);
 		$$->insert($$->end(), {$5, temp});
 		rule_match(
-			"func_declaration : type_specifier ID LPAREN parameter_list RPAREN error",
+			"func_declaration : type_specifier ID LPAREN parameter_list RPAREN SEMICOLON",
 			$$
 		);
+
+		// to match log table no
+		st->enterScope();
+		st->exitScope();
 	}
 	| type_specifier ID LPAREN RPAREN error
 	{
@@ -484,9 +504,51 @@ func_declaration :
 		$1->insert($1->end(),  {$2, $3, $4, temp});
 		$$ = $$;
 		rule_match(
-			"func_declaration : type_specifier ID LPAREN RPAREN error",
+			"func_declaration : type_specifier ID LPAREN RPAREN SEMICOLON",
 			$$
 		);
+
+		// to match log table no
+		st->enterScope();
+		st->exitScope();
+	}
+	| type_specifier ID LPAREN parameter_list error RPAREN error
+	{
+		// ERROR RECOVERY : for error after some param_list in func dec and if no semicolon in the end
+		// error handling : handle_func errors
+		handle_func($2, $1->at(0), false); // definition = false
+		cur_param_list = nullptr; // clear param for next use
+		SymbolInfo* temp = new SymbolInfo(";","SEMICOLON"); // include a semicolon
+
+		$1->insert($1->end(),  {$2, $3});
+		$$ = add_vals($1, $4);
+		$$->insert($$->end(), {$6, temp});
+		rule_match(
+			"func_declaration : type_specifier ID LPAREN parameter_list RPAREN SEMICOLON",
+			$$
+		);
+
+		// to match log table no
+		st->enterScope();
+		st->exitScope();
+	}
+	| type_specifier ID LPAREN error RPAREN error
+	{
+		// ERROR RECOVERY : error between () and if no semicolon in the end
+		// error handling : handle_func errors
+		handle_func($2, $1->at(0), false); // definition = false
+		SymbolInfo* temp = new SymbolInfo(";","SEMICOLON"); // include a semicolon
+
+		$1->insert($1->end(),  {$2, $3, $5, temp});
+		$$ = $$;
+		rule_match(
+			"func_declaration : type_specifier ID LPAREN RPAREN SEMICOLON",
+			$$
+		);
+
+		// to match log table no
+		st->enterScope();
+		st->exitScope();
 	}
 	;
 
@@ -531,7 +593,7 @@ func_definition :
 		$$->push_back($6);
 		$$ = add_vals($$, $8);
 		rule_match(
-			"func_definition : type_specifier ID LPAREN parameter_list error RPAREN compound_statement",
+			"func_definition : type_specifier ID LPAREN parameter_list RPAREN compound_statement",
 			$$
 		);
 	}
@@ -544,7 +606,7 @@ func_definition :
 		$1->insert($1->end(),  {$2, $3, $5});
 		$$ = add_vals($1, $7);
 		rule_match(
-			"func_definition : type_specifier ID LPAREN error RPAREN compound_statement",
+			"func_definition : type_specifier ID LPAREN RPAREN compound_statement",
 			$$
 		);
 	}
@@ -610,7 +672,7 @@ parameter_list  :
 		$$ = add_vals($1, $4);
 		$$->push_back($5);
 		rule_match(
-			"parameter_list : parameter_list error COMMA type_specifier ID",
+			"parameter_list : parameter_list COMMA type_specifier ID",
 			$$
 		);
 	}
@@ -623,7 +685,7 @@ parameter_list  :
 		$1->push_back($3);
 		$$ = add_vals($1, $4);
 		rule_match(
-			"parameter_list : parameter_list error COMMA type_specifier",
+			"parameter_list : parameter_list COMMA type_specifier",
 			$$
 		);
 	}
@@ -660,7 +722,7 @@ compound_statement :
 		$$ = add_vals($$, $4);
 		$$->push_back($5);
 		rule_match(
-			"compound_statement : LCURL error statements  RCURL",
+			"compound_statement : LCURL statements  RCURL",
 			$$
 		); 
 		handle_rcurl();
@@ -672,7 +734,7 @@ compound_statement :
 		$$ = add_vals($$, $3);
 		$$->push_back($5);
 		rule_match(
-			"compound_statement : LCURL statements error RCURL",
+			"compound_statement : LCURL statements RCURL",
 			$$
 		); 
 		handle_rcurl();
@@ -684,7 +746,7 @@ compound_statement :
 		// yyerrok;
 		$$ = new vector<SymbolInfo*>({$1, $4});
 		rule_match(
-			"compound_statement : LCURL error RCURL",
+			"compound_statement : LCURL statements RCURL",
 			$$
 		);
 		handle_rcurl();
@@ -712,7 +774,7 @@ var_declaration :
 
 		$$ = add_vals($1, $2);
 		$$->push_back($4);
-		rule_match("var_declaration : type_specifier declaration_list error SEMICOLON", $$);
+		rule_match("var_declaration : type_specifier declaration_list SEMICOLON", $$);
 	}
 	;	
 
@@ -784,7 +846,7 @@ declaration_list :
 		$4->value_type = "VAR";
 		$$ = add_vals($1, new vector<SymbolInfo*>({$3, $4}));
 		insert_vars($4, var_type); 
-		rule_match("declaration_list : declaration_list error COMMA ID", $$);
+		rule_match("declaration_list : declaration_list COMMA ID", $$);
 	}
 	| declaration_list error COMMA ID LTHIRD CONST_INT RTHIRD
 	{
@@ -796,7 +858,7 @@ declaration_list :
 		));
 		insert_vars($4, var_type); 
 		rule_match(
-			"declaration_list : declaration_list error COMMA ID LTHIRD CONST_INT RTHIRD", 
+			"declaration_list : declaration_list COMMA ID LTHIRD CONST_INT RTHIRD", 
 			$$
 		);
 	}
@@ -807,7 +869,7 @@ declaration_list :
 		$1->value_type = "ARRAY";
 		$$ = new vector<SymbolInfo*>({$1, $2, $3, $5}); 
 		insert_vars($1, var_type); 
-		rule_match("declaration_list : ID LTHIRD CONST_INT error RTHIRD", $$);
+		rule_match("declaration_list : ID LTHIRD CONST_INT RTHIRD", $$);
 	}
 	;
 
@@ -831,9 +893,10 @@ statements :
 	}
 	| statements error statement
 	{
+		// ERROR RECOVERY : handle errors between statements
 		$$ = add_vals($1, $3);
 		rule_match(
-			"statements : statements error statement",
+			"statements : statements statement",
 			$$
 		);
 	}
@@ -938,14 +1001,16 @@ statement :
 	| func_declaration
 	{
 		// NEW BONUS
+		delete $1; // free memory
 		$$ = new vector<SymbolInfo*>();
-		print_error("Cannot declare function inside a function");
+		print_error("Function declared inside a function");
 	}
 	| func_definition 
 	{
 		// NEW BONUS
+		delete $1; // free memory
 		$$ = new vector<SymbolInfo*>();
-		print_error("Cannot define function inside a function");
+		print_error("Function defined inside a function");
 	}
 	;
 
@@ -1246,7 +1311,11 @@ factor	:
 		// 2: if parameter no, type, sequence match
 		// check if called ID is a function
 		SymbolInfo* temp = st->lookUp($1->getName());
-		if(temp == nullptr || (!temp->func_defined)){
+		if(temp == nullptr){
+			print_error("Undeclared function " + $1->getName());
+			$1->return_type = dummy_val;
+		}
+		else if(!temp->func_defined){
 			print_error("Undefined function " + $1->getName());
 			$1->return_type = dummy_val;
 		}
@@ -1384,16 +1453,16 @@ int main(int argc,char *argv[])
 		exit(1);
 	}
 
-	freopen("1705044_log.txt", "w", stdout);
+	freopen("log.txt", "w", stdout);
 
 	yyin=fp;
 	yyparse();
 	
-	cout<<"symbol table:"<<endl;
+	/* cout<<"symbol table:"<<endl; */
 	st->printAll();
 	cout<<"Total lines: "<<line_count<<endl;
 	cout<<"Total errors: "<<error_count<<endl;
-	fout<<"Total errors: "<<error_count<<endl;
+	/* fout<<"Total errors: "<<error_count<<endl; */
 	fout.close();
 	fclose(fp);
 	

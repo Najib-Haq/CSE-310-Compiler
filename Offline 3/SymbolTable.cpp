@@ -190,7 +190,7 @@ void ScopeTable::print(){
         if(symbolList != nullptr) {
             cout<<" "<<i<<" --> ";
             while(symbolList != nullptr){
-                cout<<"< "<<symbolList->getName()<<" : "<<symbolList->getType()<<"> ";
+                cout<<"< "<<symbolList->getName()<<" , "<<symbolList->getType()<<" > ";
                 symbolList = symbolList->getNext();
             }
             cout<<endl;
@@ -270,7 +270,7 @@ void SymbolTable::exitScope(){
     if(this->currTable == nullptr) return; 
     this->curr_id = this->trackId();
     ScopeTable* temp = this->currTable;
-    cout<<"ScopeTable with id "<<temp->getID()<<" removed"<<endl;
+    // cout<<"ScopeTable with id "<<temp->getID()<<" removed"<<endl;
     this->currTable = this->currTable->getParentScope();
     delete temp;
     // cout<<"successfully deleted"<<endl;
