@@ -33,8 +33,8 @@ int label_count = -1; // keep track of labels
 int temp_count = -1; // keep track of temporary variables
 
 int scope_id = 0; // keep track of scope for declared variables
-string init_vars = ""; // string to keep track of variable initializations
-
+string return_variable = "return_value"; // to get output of return value from a function
+string init_vars = "\t" + return_variable + " dw ?\n"; // string to keep track of variable initializations
 
 string newLabel(){
 	label_count += 1;
@@ -131,6 +131,37 @@ string get_relop_command(string val){
 	else if(val == "!=") return "je";
 	return "";
 }
+
+// get pushed parameters' position in stack
+string param_stack_position(int pos, int total){
+	int index = (total-pos)*2 + 4;
+	return "word ptr [bp + " + to_string(index) + "]";
+}
+
+// handle function definition code
+void function_code(string func_name, SymbolInfo* func_body, int len_params){
+	string code, ret="";
+	if(len_params>0) ret = to_string(len_params*2); // pop return saved params of stack
+
+	if(func_name == "main") {
+		code = "\tmov ax, @data\n\tmov ds, ax\n" + func_body->code + // data segment for main
+			   "\t;dos exit\n\tmov ah, 4ch\n\tint 21h\n"; // return control to dos
+	}
+	else{
+		// push to stack and pop
+		// save di too because of array
+		code = "\tpush bp\n" 	// save bp
+			   "\tmov bp, sp\n"
+			   "\tpush ax\n\tpush bx\n\tpush cx\n\tpush dx\n\tpush di\n" + // standard practise
+			   func_body->code + 
+			   "\tpop di\n\tpop dx\n\tpop cx\n\tpop bx\n\tpop ax\n"
+			   "\tpop bp\n" 	// restore bp
+			   "\tret " + ret + "\n"; // restore stack and return
+	}
+	
+	func_body->code = code; // set string
+}
+
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////// PARSER FUNCTIONS //////////////////////////////////////////////////////////////////
@@ -248,7 +279,6 @@ void insert_vars(SymbolInfo* id, string type){
 	if(!success) print_error("Multiple declaration of " + id->getName());
 }
 
-
 // helper for lcurl and rcurl
 void handle_lcurl(){
 	scope_id += 1; // for ICG variable declaration names
@@ -261,9 +291,13 @@ void handle_lcurl(){
 		for(int i=0; i<cur_param_list->size(); i++){
 				temp = cur_param_list->at(i);
 				
-				// for ICG declared variables
-				temp->symbol = temp->name + "_" + to_string(scope_id); // format name_current scope
-				init_vars += "\t" + temp->symbol + " dw ?\n";	
+				/////// for ICG declared variables /////////////////////////////
+				// NOT USING STACK, STORE IN GLOBAL MEMORY
+				// temp->symbol = temp->name + "_" + to_string(scope_id); // format name_current scope
+				// init_vars += "\t" + temp->symbol + " dw ?\n";	
+
+				// USING STACK
+				temp->symbol = param_stack_position(i, cur_param_list->size()-1);
 
 				success = st->insert(new SymbolInfo(temp));  // TODO : TRACK ALL LIFECYCLES, CALL DESTRUCTOR ON PARAM_LIST IN SYMBOLINFO
 				// if(!success) print_error("Multiple declaration of "+ temp->getName() + " in parameter"); // TODO
@@ -696,18 +730,11 @@ func_definition :
 	type_specifier ID LPAREN parameter_list RPAREN{ handle_func($2, $1->at(0)); } compound_statement
 	{
 		// error handling : handle_func errors
-		cur_param_list = nullptr; // clear param for next use
 		in_function = false; // out of function
 
-		if($2->name == "main") {
-			$7->at(0)->code = "\tmov ax, @data\n\tmov ds, ax\n" + $7->at(0)->code + // data segment for main
-							  "\t;dos exit\n\tmov ah, 4ch\n\tint 21h\n"; // return control to dos
-		}
-		else{
-			// push to stack and pop
-			$7->at(0)->code = "\tpush ax\n\tpush bx\n\tpush cx\n\tpush dx\n" + $7->at(0)->code +
-							  "\tpop dx\n\tpop cx\n\tpop bx\n\tpop ax\n";
-		}
+		int len_params = 0;
+		if(cur_param_list != nullptr) len_params = cur_param_list->size();
+		function_code($2->name, $7->at(0), len_params);
 		$1->at(0)->code = $2->name + " PROC\n" + $7->at(0)->code + "\n" + $2->name + " ENDP\n";
 
 		$1->insert($1->end(),  {$2, $3});
@@ -717,22 +744,17 @@ func_definition :
 		rule_match(
 			"func_definition : type_specifier ID LPAREN parameter_list RPAREN compound_statement",
 			$$
-		);						   
+		);
+
+		// need cur param list length to check length
+		cur_param_list = nullptr; // clear param for next use						   
 	}
 	| type_specifier ID LPAREN RPAREN{ handle_func($2, $1->at(0)); } compound_statement
 	{
 		// error handling : handle_func errors
 		in_function = false; // out of function
 
-		if($2->name == "main") {
-			$6->at(0)->code = "\tmov ax, @data\n\tmov ds, ax\n" + $6->at(0)->code + // data segment for main
-							  "\t;dos exit\n\tmov ah, 4ch\n\tint 21h\n"; // return control to dos
-		}
-		else{
-			// push to stack and pop
-			$6->at(0)->code = "\tpush ax\n\tpush bx\n\tpush cx\n\tpush dx\n" + $6->at(0)->code +
-							  "\tpop dx\n\tpop cx\n\tpop bx\n\tpop ax\n";
-		}
+		function_code($2->name, $6->at(0), 0);
 		$1->at(0)->code = $2->name + " proc\n" + $6->at(0)->code + "\n" + $2->name + " endp\n";
 
 		$1->insert($1->end(),  {$2, $3, $4});
@@ -1232,7 +1254,10 @@ statement :
 	| RETURN expression SEMICOLON
 	{
 
-		// TODO
+		// TODO : now done using temp val
+		$1->code = $2->at(0)->code + // get statement
+				   "\tmov ax, " + $2->at(0)->symbol + "\n" 
+				   "\tmov " + return_variable + ", ax\n"; // save return value
 
 		$$ = new vector<SymbolInfo*>({$1});
 		$$ = add_vals($$, $2);
@@ -1686,7 +1711,10 @@ factor	:
 			delete args;
 		}
 
-		add_code($1, $3->at(0));
+		add_code($1, $3->at(0)); // push all arguments to stack code
+		$1->code += "\tcall " + $1->name + "\n"; // call the function
+		$1->symbol = return_variable; // store return value in ax
+
 		$$ = new vector<SymbolInfo*>({$1, $2});
 		$$ = add_vals($$, $3);
 		$$->push_back($4);
@@ -1792,6 +1820,9 @@ arguments :
 	arguments COMMA logic_expression
 	{
 		add_code($1->at(0), $3->at(0));
+		$1->at(0)->code += $3->at(0)->code + 
+						   "\tpush " + $3->at(0)->symbol + "\n"; // push to stack
+
 		$$ = $1;
 		$$->push_back($2);
 		$$ = add_vals($$, $3);
@@ -1802,6 +1833,8 @@ arguments :
 	}
 	| logic_expression
 	{
+		$1->at(0)->code += "\tpush " + $1->at(0)->symbol + "\n"; // push to stack
+
 		$$ = $1;
 		rule_match(
 			"arguments : logic_expression",
