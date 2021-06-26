@@ -43,7 +43,55 @@ string newLabel(){
 
 string newTemp(){
 	temp_count += 1;
-	return "t_"+to_string(temp_count);
+	string new_temp = "t_"+to_string(temp_count);
+	init_vars += "\t" + new_temp + " dw ?\n";	
+	return new_temp;
+}
+
+string print_func(){
+	return "print PROC\n"
+		   "\tpush ax\n"
+		   "\tpush bx\n"  // push the registers
+		   "\tpush cx\n"  // assuming ax has the printing value
+		   "\tpush dx\n"
+		   "\t;check neg\n"
+		   "\tcmp ax, 8000H\n" // check if neg
+		   "\tjb positive\n" // if ax<2^15, then positive number
+		   "negative:\n"
+		   "\tneg ax\n" // make ax negative
+		   "\tpush ax\n" // save ax
+		   "\tmov ah, 2\n" // print mode
+		   "\tmov dl, '-'\n" // print minus
+		   "\tint 21h\n"
+		   "\tpop ax\n"
+		   "positive:\n"
+		   "\tmov bx, 10\n" // bx = 10
+		   "\tmov cx, 0\n"  // cx = 0
+		   "getVals:\n"
+		   "\tmov dx, 0\n" 
+		   "\tdiv bx\n"  // divide by 10
+		   "\tpush dx\n" // dx = dx : ax % 10 -> stack
+		   "\tinc cx\n"  // cx += 1
+		   "\tcmp ax, 0\n"  // ax is now dx : ax / 10
+		   "\tjne getVals\n" // if quotient != 0 then continue division
+		   "printing:\n"
+		   "\tmov ah, 2\n" // print mode
+		   "\tpop dx\n" // get stack values
+		   "\tadd dl, '0'\n" // get actual print value (ascii + 48)
+		   "\tint 21h\n"
+		   "\tdec cx\n" // c-=1
+		   "\tcmp cx, 0\n"
+		   "\tjne printing\n" // if c!=0: more things left to print
+		   "\tmov dl, 0Ah\n" // CR
+		   "\tint 21h\n" 
+		   "\tmov dl, 0Dh\n" // LR
+		   "\tint 21h\n"
+		   "\tpop dx\n" // return the appropriate values
+		   "\tpop cx\n"
+		   "\tpop bx\n"
+		   "\tpop ax\n"
+		   "\tret\n"
+		   "print ENDP\n\n";
 }
 
 // generate ICG
@@ -58,7 +106,7 @@ void ICG(string code){
 	initiate += ".CODE\n"; // initiate code section
 	
 	// TODO: write print function
-
+	initiate += print_func();
 	// full code
 	fasm<<initiate;
 	fasm<<code;
@@ -67,10 +115,10 @@ void ICG(string code){
 	fasm.close();
 }
 
-
 // add code values
 void add_code(SymbolInfo* s1, SymbolInfo* s2){
 	s1->code = s1->code + s2->code;
+	if(s1->symbol == "") s1->symbol = s2->symbol; // TODO :  check this
 }
 
 // get commands from relation ops -> opposite relations
@@ -651,7 +699,15 @@ func_definition :
 		cur_param_list = nullptr; // clear param for next use
 		in_function = false; // out of function
 
-		if($2->name == "main") $7->at(0)->code = "mov ax, @data\n\tmov ds, ax\n" + $7->at(0)->code; // data segment for main
+		if($2->name == "main") {
+			$7->at(0)->code = "\tmov ax, @data\n\tmov ds, ax\n" + $7->at(0)->code + // data segment for main
+							  "\t;dos exit\n\tmov ah, 4ch\n\tint 21h\n"; // return control to dos
+		}
+		else{
+			// push to stack and pop
+			$7->at(0)->code = "\tpush ax\n\tpush bx\n\tpush cx\n\tpush dx\n" + $7->at(0)->code +
+							  "\tpop dx\n\tpop cx\n\tpop bx\n\tpop ax\n";
+		}
 		$1->at(0)->code = $2->name + " PROC\n" + $7->at(0)->code + "\n" + $2->name + " ENDP\n";
 
 		$1->insert($1->end(),  {$2, $3});
@@ -668,7 +724,15 @@ func_definition :
 		// error handling : handle_func errors
 		in_function = false; // out of function
 
-		if($2->name == "main") $6->at(0)->code = "mov ax, @data\n\tmov ds, ax\n" + $6->at(0)->code; // data segment for main
+		if($2->name == "main") {
+			$6->at(0)->code = "\tmov ax, @data\n\tmov ds, ax\n" + $6->at(0)->code + // data segment for main
+							  "\t;dos exit\n\tmov ah, 4ch\n\tint 21h\n"; // return control to dos
+		}
+		else{
+			// push to stack and pop
+			$6->at(0)->code = "\tpush ax\n\tpush bx\n\tpush cx\n\tpush dx\n" + $6->at(0)->code +
+							  "\tpop dx\n\tpop cx\n\tpop bx\n\tpop ax\n";
+		}
 		$1->at(0)->code = $2->name + " proc\n" + $6->at(0)->code + "\n" + $2->name + " endp\n";
 
 		$1->insert($1->end(),  {$2, $3, $4});
@@ -1051,6 +1115,20 @@ statement :
 	}
 	| FOR LPAREN expression_statement expression_statement expression RPAREN statement
 	{
+		string label_start = newLabel(), label_end = newLabel();
+		$1->code = $3->at(0)->code + // initialization
+				   label_start + ":\n" +  // start loop
+				   $4->at(0)->code + // condition calculate
+				   "\tmov ax, " + $4->at(0)->symbol + "\n" // condition eval
+				   "\tcmp ax, 0\n"
+				   "\tje " + label_end + "\n" + // if false then end loop 
+				   $7->at(0)->code + // statement in loop
+				   $5->at(0)->code + // change
+				   "\tjmp " + label_start + "\n" + // continue loop
+				   label_end + ":\n"; // exit
+				   
+
+
 		$$ = new vector<SymbolInfo*>({$1, $2});
 		$$ = add_vals($$, $3);
 		$$ = add_vals($$, $4);
@@ -1066,6 +1144,14 @@ statement :
 	}
 	| IF LPAREN expression RPAREN statement	%prec LOWER_THAN_ELSE
 	{
+		string label = newLabel();
+		$1->code = $3->at(0)->code + 
+				   "\tmov ax, " + $3->at(0)->symbol + "\n"
+				   "\tcmp ax, 0\n" // if not true
+				   "\tje " + label + "\n" + // jump to end
+				   $5->at(0)->code +  // else execute statement
+				   label + ":\n";
+
 		$$ = new vector<SymbolInfo*>({$1, $2});
 		$$ = add_vals($$, $3);
 		$$->push_back($4);
@@ -1079,6 +1165,17 @@ statement :
 	}
 	| IF LPAREN expression RPAREN statement ELSE statement
 	{
+		string label_else = newLabel(), label_exit = newLabel();
+		$1->code = $3->at(0)->code + 
+				   "\tmov ax, " + $3->at(0)->symbol + "\n"
+				   "\tcmp ax, 0\n" // if not true
+				   "\tje " + label_else + "\n" + // jump to else
+				   $5->at(0)->code +  // if conditioned statement
+				   "\tjmp " + label_exit + "\n" +// move to exit
+				   label_else + ":\n" +
+				   $7->at(0)->code +  // else conditioned statement
+				   label_exit + ":\n";
+
 		$$ = new vector<SymbolInfo*>({$1, $2});
 		$$ = add_vals($$, $3);
 		$$->push_back($4);
@@ -1094,6 +1191,16 @@ statement :
 	}
 	| WHILE LPAREN expression RPAREN statement
 	{
+		string label1 = newLabel(), label2 = newLabel();
+		$1->code = label1 + ":\n" +
+				   $3->at(0)->code + // do condition code
+				   "\tmov ax, " + $3->at(0)->symbol + "\n"
+				   "\tcmp ax, 0\n" // compare
+				   "\tje " + label2 + "\n" + // go out of while loop if (false)
+				   $5->at(0)->code + // execute statement
+				   "\tjmp " + label1 + "\n" + // continue while loop
+				   label2 + ":\n";
+
 		$$ = new vector<SymbolInfo*>({$1, $2});
 		$$ = add_vals($$, $3);
 		$$->push_back($4);
@@ -1111,6 +1218,9 @@ statement :
 	    // 1: check declaration
 		check_var_declared($3);
 
+		$1->code = "\tmov ax, " + $3->symbol + "\n"
+				   "\tcall print\n";
+
 		$$ = new vector<SymbolInfo*>({$1, $2, $3, $4, $5});
 		string value = rule_match(
 			"statement : PRINTLN LPAREN ID RPAREN SEMICOLON",
@@ -1121,6 +1231,9 @@ statement :
 	}
 	| RETURN expression SEMICOLON
 	{
+
+		// TODO
+
 		$$ = new vector<SymbolInfo*>({$1});
 		$$ = add_vals($$, $2);
 		$$->push_back($3);
@@ -1300,7 +1413,7 @@ logic_expression :
 				   label2 + ":\n";
 		}		   
 
-		$1->at(0)->code = code;
+		$1->at(0)->code += code;
 		$1->at(0)->symbol = temp;
 
 		$$ = $1;
@@ -1344,7 +1457,7 @@ rel_expression	:
 			   label1 + ":\n"
 			   "\tmov " + temp + ", 0\n" + // result = false
 			   label2 + ":\n";
-		$1->at(0)->code = code;
+		$1->at(0)->code += code;
 		$1->at(0)->symbol = temp;
 		
 
@@ -1379,11 +1492,12 @@ simple_expression :
 			"" //"Incompatible type in ADDOP"
 		);
 
+        add_code($1->at(0), $3->at(0));
 		string sign = "";
 		if($2->name == "+") sign = "add";
 		else if($2->name == "-") sign = "sub"; 
 		string temp = newTemp();
-		$1->at(0)->code = "\tmov ax, " + $1->at(0)->symbol + "\n"
+		$1->at(0)->code += "\tmov ax, " + $1->at(0)->symbol + "\n"
 						  "\t" + sign + " ax, " + $3->at(0)->symbol + "\n"
 						  "\tmov " + temp + ", ax\n"; // store score in temp variable
 		$1->at(0)->symbol = temp; // store representative variable
@@ -1437,7 +1551,31 @@ term :
 			}
 		}
 
+		// TODO : signed or unsigned, for some reason -1, -6, .. shows up when x % 5 == 0 instead of 0, -5
 		add_code($1->at(0), $3->at(0));
+		string op, temp = newTemp(), result_reg = "ax";		
+		// set operation
+		if($2->name == "*") op = "\tmul bx\n";
+		else if($2->name == "/" || $2->name == "%") {
+			op = "\t;check negative\n" // if ax is neg then dx must be 0ffffh
+				 "\tcmp ax, 8000h\n"
+				 "\tjb dividend_positive\n"
+				 "\tmov dx, 0fffh\n" // if neg then dx = 0fffh
+				 "\tjmp divop\n"
+				 "dividend_positive:\n"
+				 "\txor dx, dx\n" // if pos then dx = 0000
+				 "divop:\n"
+				 "\tdiv bx\n";
+		}
+		// set destination reg
+		if($2->name == "%") result_reg = "dx";
+		
+		$1->at(0)->code += "\tmov ax, " + $1->at(0)->symbol + "\n"
+					       "\tmov bx, " + $3->at(0)->symbol + "\n" +
+						   op + // * : DX::AX = AX * BX, ||||||  / : AX = DX::AX / BX and DX = DX::AX % BX
+						   "\tmov " + temp + ", " + result_reg + "\n"; 
+		$1->at(0)->symbol = temp;
+
 		$$ = $1;
 		$$->push_back($2);
 		$$ = add_vals($$, $3);
@@ -1458,7 +1596,16 @@ unary_expression :
 			$2->at(0)->return_type
 		);
 
-		add_code($1, $2->at(0));
+		// TODO : checking for negative number here. anything else?
+		string temp = newTemp();
+		if($1->name == "-") {
+			$1->code = $2->at(0)->code + 
+					   "\tmov ax, " + $2->at(0)->symbol + "\n" 
+					   "\tneg ax\n"
+					   "\tmov " + temp + ", ax\n";
+			$1->symbol = temp;
+		}
+
 		$$ = new vector<SymbolInfo*>({$1});
 		$$ = add_vals($$, $2);
 		rule_match(
@@ -1474,7 +1621,11 @@ unary_expression :
 			$2->at(0)->return_type
 		);
 
-		add_code($1, $2->at(0));
+		$1->code = $2->at(0)->code + 
+				   "\tmov ax, " + $2->at(0)->symbol + "\n" + 
+				   "\tnot ax\n" + 
+				   "\tmov " + newTemp() + ", ax\n";
+ 
 		$$ = new vector<SymbolInfo*>({$1});
 		$$ = add_vals($$, $2);
 		rule_match(
@@ -1583,6 +1734,13 @@ factor	:
 	}
 	| variable INCOP 
 	{
+		// handle postfix
+		string temp = newTemp();
+		$1->at(0)->code += "\tmov ax, " + $1->at(0)->symbol + "\n"
+						   "\tmov " + temp + ", ax\n" 
+						   "\tinc "+$1->at(0)->symbol+"\n";
+		$1->at(0)->symbol = temp;
+
 		$$ = $1;
 		$$->push_back($2);
 		rule_match(
@@ -1592,6 +1750,14 @@ factor	:
 	}
 	| variable DECOP
 	{
+		
+		// handle postfix
+		string temp = newTemp();
+		$1->at(0)->code += "\tmov ax, " + $1->at(0)->symbol + "\n"
+						   "\tmov " + temp + ", ax\n" 
+						   "\tdec "+$1->at(0)->symbol+"\n";
+		$1->at(0)->symbol = temp;
+		
 		$$ = $1;
 		$$->push_back($2);
 		rule_match(
