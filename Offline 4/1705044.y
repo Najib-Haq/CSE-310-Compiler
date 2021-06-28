@@ -153,10 +153,10 @@ void function_code(string func_name, SymbolInfo* func_body, int len_params){
 		code = "\tpush bp\n" 	// save bp
 			   "\tmov bp, sp\n"
 			   "\tpush ax\n\tpush bx\n\tpush cx\n\tpush dx\n\tpush di\n" + // standard practise
-			   func_body->code + 
-			   "\tpop di\n\tpop dx\n\tpop cx\n\tpop bx\n\tpop ax\n"
-			   "\tpop bp\n" 	// restore bp
-			   "\tret " + ret + "\n"; // restore stack and return
+			   func_body->code; // + 
+			//    "\tpop di\n\tpop dx\n\tpop cx\n\tpop bx\n\tpop ax\n"
+			//    "\tpop bp\n" 	// restore bp
+			//    "\tret " + ret + "\n"; // restore stack and return
 	}
 	
 	func_body->code = code; // set string
@@ -1255,9 +1255,15 @@ statement :
 	{
 
 		// TODO : now done using temp val
+		int len = 0;
+		if(cur_param_list != nullptr) len = cur_param_list->size();
 		$1->code = $2->at(0)->code + // get statement
 				   "\tmov ax, " + $2->at(0)->symbol + "\n" 
-				   "\tmov " + return_variable + ", ax\n"; // save return value
+				   "\tmov " + return_variable + ", ax\n" // save return value
+				   "\tpop di\n\tpop dx\n\tpop cx\n\tpop bx\n\tpop ax\n\tpop bp\n" // pop stack values
+				   "\tret " +  to_string(len*2) + "\n"; // return
+				   // return needs to be here for recursion function
+				   // TODO : but a function can have no return too ??
 
 		$$ = new vector<SymbolInfo*>({$1});
 		$$ = add_vals($$, $2);
@@ -1329,7 +1335,6 @@ variable :
 			// if return type is dummy_val then already an error has occured so no need to show this
 			if(($3->at(0)->return_type != "INT") && ($3->at(0)->return_type != dummy_val))
 				print_error("Expression inside third brackets not an integer");
-
 		}
 
 		$1->code = $3->at(0)->code + "\tmov di, " +$3->at(0)->symbol + "\n"
@@ -1711,10 +1716,21 @@ factor	:
 			delete args;
 		}
 
+		// get saving temp variables in stack string for RECURSION
+		string temp_push_stack = "", temp_pop_stack = "";
+		for(int i=0; i<temp_count+1; i++){
+			temp_push_stack += "\tpush t_" + to_string(i) + "\n";
+			temp_pop_stack = "\tpop t_" + to_string(i) + "\n" + temp_pop_stack;
+		}
+
+		string temp_var = newTemp();
+		$1->code += temp_push_stack; // push temp vars
 		add_code($1, $3->at(0)); // push all arguments to stack code
 		$1->code += "\tcall " + $1->name + "\n"; // call the function
-		$1->symbol = return_variable; // store return value in ax
-
+		$1->code += temp_pop_stack + // pop temp vars
+			     	"\tmov ax, " + return_variable + "\n" // store the return value in new temp var for recursion
+					"\tmov " + temp_var + ", ax\n";
+		$1->symbol = temp_var; // store return value in ax,
 		$$ = new vector<SymbolInfo*>({$1, $2});
 		$$ = add_vals($$, $3);
 		$$->push_back($4);
