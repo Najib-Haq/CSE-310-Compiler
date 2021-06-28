@@ -35,6 +35,7 @@ int temp_count = -1; // keep track of temporary variables
 int scope_id = 0; // keep track of scope for declared variables
 string return_variable = "return_value"; // to get output of return value from a function
 string init_vars = "\t" + return_variable + " dw ?\n"; // string to keep track of variable initializations
+vector<string>* init_vars_list = new vector<string>(); // to keep track of all variables -> specially needed for function call
 
 string newLabel(){
 	label_count += 1;
@@ -44,7 +45,7 @@ string newLabel(){
 string newTemp(){
 	temp_count += 1;
 	string new_temp = "t_"+to_string(temp_count);
-	init_vars += "\t" + new_temp + " dw ?\n";	
+	init_vars += "\t" + new_temp + " dw ?\n";	// insert temp vars from temp count now
 	return new_temp;
 }
 
@@ -102,6 +103,7 @@ void ICG(string code){
 	string initiate = ".MODEL small\n"
 					  ".STACK 100h\n"
 					  ".DATA\n";
+
 	initiate += init_vars + '\n'; // add declared variables
 	initiate += ".CODE\n"; // initiate code section
 	
@@ -993,6 +995,7 @@ declaration_list :
 
 		$3->symbol = $3->name + "_" + to_string(scope_id); // format name_current scope
 		init_vars += "\t" + $3->symbol + " dw ?\n";	
+		init_vars_list->push_back($3->symbol);
 
 		$$ = add_vals($1, new vector<SymbolInfo*>({$2, $3}));
 		insert_vars($3, var_type); 
@@ -1005,6 +1008,7 @@ declaration_list :
 		
 		$3->symbol = $3->name + "_" + to_string(scope_id); // format name_current scope
 		init_vars += "\t" + $3->symbol + " dw " + $5->name + " dup(?)\n";
+		init_vars_list->push_back($3->symbol);
 
 		$$ = add_vals($1, new vector<SymbolInfo*>(
 			{$2, $3, $4, $5, $6}
@@ -1022,6 +1026,7 @@ declaration_list :
 
 		$1->symbol = $1->name + "_" + to_string(scope_id); // format name_current scope
 		init_vars += "\t" + $1->symbol + " dw ?\n";
+		init_vars_list->push_back($1->symbol);
 
 		$$ = new vector<SymbolInfo*>({$1});
 		insert_vars($1, var_type);  
@@ -1034,6 +1039,7 @@ declaration_list :
 
 		$1->symbol = $1->name + "_" + to_string(scope_id); // format name_current scope
 		init_vars += "\t" + $1->symbol + " dw " + $3->name + " dup(?)\n";
+		init_vars_list->push_back($1->symbol);
 
 		$$ = new vector<SymbolInfo*>({$1, $2, $3, $4}); 
 		insert_vars($1, var_type); 
@@ -1716,18 +1722,25 @@ factor	:
 			delete args;
 		}
 
-		// get saving temp variables in stack string for RECURSION
-		string temp_push_stack = "", temp_pop_stack = "";
+		// get saving variables in stack string for RECURSION
+		string push_stack = "", pop_stack = "", temp_str;
+		// get declared vars
+		for (auto i = init_vars_list->begin(); i != init_vars_list->end(); ++i){
+			temp_str = *i;
+			push_stack += "\tpush " + temp_str + "\n";
+			pop_stack = "\tpop " + temp_str + "\n" + pop_stack; // add in the end to maintain stack nature
+		} 
+		// get temp vars
 		for(int i=0; i<temp_count+1; i++){
-			temp_push_stack += "\tpush t_" + to_string(i) + "\n";
-			temp_pop_stack = "\tpop t_" + to_string(i) + "\n" + temp_pop_stack;
+			push_stack += "\tpush t_" + to_string(i) + "\n";
+			pop_stack = "\tpop t_" + to_string(i) + "\n" + pop_stack;
 		}
 
 		string temp_var = newTemp();
-		$1->code += temp_push_stack; // push temp vars
+		$1->code += push_stack; // push temp vars
 		add_code($1, $3->at(0)); // push all arguments to stack code
 		$1->code += "\tcall " + $1->name + "\n"; // call the function
-		$1->code += temp_pop_stack + // pop temp vars
+		$1->code += pop_stack + // pop temp vars
 			     	"\tmov ax, " + return_variable + "\n" // store the return value in new temp var for recursion
 					"\tmov " + temp_var + ", ax\n";
 		$1->symbol = temp_var; // store return value in ax,
@@ -1893,4 +1906,5 @@ int main(int argc,char *argv[])
 	
 	return 0;
 }
+
 
