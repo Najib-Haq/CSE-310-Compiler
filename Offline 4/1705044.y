@@ -31,6 +31,8 @@ string var_type = "-100"; // to store type of variables in declaration_list to m
 ofstream fasm("code.asm");
 int label_count = -1; // keep track of labels
 int temp_count = -1; // keep track of temporary variables
+int total_temp_count = -1; // keep track of TOTAL temps : for efficient temps
+int prev_temp_count = -1; // keep track of previous temps : for efficient temps
 
 int scope_id = 0; // keep track of scope for declared variables
 string return_variable = "return_value"; // to get output of return value from a function
@@ -45,7 +47,12 @@ string newLabel(){
 string newTemp(){
 	temp_count += 1;
 	string new_temp = "t_"+to_string(temp_count);
-	init_vars += "\t" + new_temp + " dw ?\n";	// insert temp vars from temp count now
+
+	// for efficient temps
+	if(temp_count > total_temp_count){
+		total_temp_count = temp_count;
+		init_vars += "\t" + new_temp + " dw ?\n";	// insert temp vars from temp count now
+	}
 	return new_temp;
 }
 
@@ -305,13 +312,18 @@ void handle_lcurl(){
 				// if(!success) print_error("Multiple declaration of "+ temp->getName() + " in parameter"); // TODO
 			}
 	}
-
+	// efficient temps
+	prev_temp_count = temp_count; // save current temp count
+	temp_count = -1; // initialize temp count	
 }
 
 
 void handle_rcurl(){
 	st->printAll();
 	st->exitScope();
+
+	// efficient temps
+	temp_count = prev_temp_count; // restore temp count	
 }
 
 
@@ -1906,5 +1918,4 @@ int main(int argc,char *argv[])
 	
 	return 0;
 }
-
 
