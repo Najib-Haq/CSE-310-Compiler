@@ -33,6 +33,7 @@ int label_count = -1; // keep track of labels
 int temp_count = -1; // keep track of temporary variables
 int total_temp_count = -1; // keep track of TOTAL temps : for efficient temps
 int prev_temp_count = -1; // keep track of previous temps : for efficient temps
+bool in_main = false; // check if currently in main function
 
 int scope_id = 0; // keep track of scope for declared variables
 string return_variable = "return_value"; // to get output of return value from a function
@@ -57,11 +58,12 @@ string newTemp(){
 }
 
 string print_func(){
+	// assumes value to print is saved in register ax
 	return "print PROC\n"
-		   "\tpush ax\n"
-		   "\tpush bx\n"  // push the registers
-		   "\tpush cx\n"  // assuming ax has the printing value
-		   "\tpush dx\n"
+		//    "\tpush ax\n"
+		//    "\tpush bx\n"  // push the registers
+		//    "\tpush cx\n"  // assuming ax has the printing value
+		//    "\tpush dx\n"
 		   "\t;check neg\n"
 		   "\tcmp ax, 8000H\n" // check if neg
 		   "\tjb positive\n" // if ax<2^15, then positive number
@@ -94,11 +96,11 @@ string print_func(){
 		   "\tint 21h\n" 
 		   "\tmov dl, 0Dh\n" // LR
 		   "\tint 21h\n"
-		   "\tpop dx\n" // return the appropriate values
-		   "\tpop cx\n"
-		   "\tpop bx\n"
-		   "\tpop ax\n"
-		   "\tret\n"
+		//    "\tpop dx\n" // return the appropriate values
+		//    "\tpop cx\n"
+		//    "\tpop bx\n"
+		//    "\tpop ax\n"
+		   "\tret \n"
 		   "print ENDP\n\n";
 }
 
@@ -160,8 +162,8 @@ void function_code(string func_name, SymbolInfo* func_body, int len_params){
 		// push to stack and pop
 		// save di too because of array
 		code = "\tpush bp\n" 	// save bp
-			   "\tmov bp, sp\n"
-			   "\tpush ax\n\tpush bx\n\tpush cx\n\tpush dx\n\tpush di\n" + // standard practise
+			   "\tmov bp, sp\n" + 
+			//    "\tpush ax\n\tpush bx\n\tpush cx\n\tpush dx\n\tpush di\n" + // standard practise
 			   func_body->code; // + 
 			//    "\tpop di\n\tpop dx\n\tpop cx\n\tpop bx\n\tpop ax\n"
 			//    "\tpop bp\n" 	// restore bp
@@ -323,7 +325,8 @@ void handle_rcurl(){
 	st->exitScope();
 
 	// efficient temps
-	temp_count = prev_temp_count; // restore temp count	
+	temp_count = prev_temp_count; // restore temp count
+	in_main = false; // for ICG main return handle 	
 }
 
 
@@ -418,6 +421,8 @@ void handle_func(SymbolInfo* id, SymbolInfo* return_type, bool define=true){
 	if(define){
 		// this enables LCURL action : inserts params if available
 		in_function = true;
+		// ICG handle main return
+		if(id->name == "main") in_main = true;
 	}
 }
 
@@ -749,7 +754,9 @@ func_definition :
 		int len_params = 0;
 		if(cur_param_list != nullptr) len_params = cur_param_list->size();
 		function_code($2->name, $7->at(0), len_params);
-		$1->at(0)->code = $2->name + " PROC\n" + $7->at(0)->code + "\n" + $2->name + " ENDP\n";
+		// handle return + stack pop for void functions
+		if($1->at(0)->type == "VOID") $7->at(0)->code += "\tpop bp\n\tret " +  to_string(cur_param_list->size()*2) + "\n";
+		$1->at(0)->code = $2->name + " PROC\n" + $7->at(0)->code + $2->name + " ENDP\n";
 
 		$1->insert($1->end(),  {$2, $3});
 		$$ = add_vals($1, $4);
@@ -769,6 +776,8 @@ func_definition :
 		in_function = false; // out of function
 
 		function_code($2->name, $6->at(0), 0);
+		// handle return + stack pop for void functions
+		if($1->at(0)->type == "VOID") $6->at(0)->code += "\tpop bp\n\tret " +  to_string(cur_param_list->size()*2) + "\n";
 		$1->at(0)->code = $2->name + " proc\n" + $6->at(0)->code + "\n" + $2->name + " endp\n";
 
 		$1->insert($1->end(),  {$2, $3, $4});
@@ -1275,13 +1284,17 @@ statement :
 		// TODO : now done using temp val
 		int len = 0;
 		if(cur_param_list != nullptr) len = cur_param_list->size();
-		$1->code = $2->at(0)->code + // get statement
-				   "\tmov ax, " + $2->at(0)->symbol + "\n" 
-				   "\tmov " + return_variable + ", ax\n" // save return value
-				   "\tpop di\n\tpop dx\n\tpop cx\n\tpop bx\n\tpop ax\n\tpop bp\n" // pop stack values
-				   "\tret " +  to_string(len*2) + "\n"; // return
-				   // return needs to be here for recursion function
-				   // TODO : but a function can have no return too ??
+		// no return statement for main
+		if(!in_main){
+			$1->code = $2->at(0)->code + // get statement
+						"\tmov ax, " + $2->at(0)->symbol + "\n" 
+						"\tmov " + return_variable + ", ax\n" // save return value
+						//    "\tpop di\n\tpop dx\n\tpop cx\n\tpop bx\n\tpop ax\n"
+						"\tpop bp\n" // pop stack values
+						"\tret " +  to_string(len*2) + "\n"; // return -> do this in func def too to handle void
+						// return needs to be here for recursion function
+						// TODO : but a function can have no return too ??
+		}
 
 		$$ = new vector<SymbolInfo*>({$1});
 		$$ = add_vals($$, $2);
@@ -1357,6 +1370,7 @@ variable :
 
 		$1->code = $3->at(0)->code + "\tmov di, " +$3->at(0)->symbol + "\n"
 						             "\tadd di, di\n";
+		$1->symbol += "[di]"; // add indexing 
 
 		$$ = new vector<SymbolInfo*>({$1, $2});
 		$$ = add_vals($$, $3);
@@ -1398,12 +1412,9 @@ variable :
 			);
 		}
 
-
-		string if_array = "";
-		if ($1->at(0)->value_type == "ARRAY") if_array = "[di]"; // saves array index
 		$1->at(0)->code += $3->at(0)->code + \
 						   "\tmov ax, " + $3->at(0)->symbol + "\n"
-						   "\tmov " + $1->at(0)->symbol + if_array + ", ax\n";
+						   "\tmov " + $1->at(0)->symbol + ", ax\n";
 
 		$$ = $1;
 		$$->push_back($2);
@@ -1752,9 +1763,12 @@ factor	:
 		$1->code += push_stack; // push temp vars
 		add_code($1, $3->at(0)); // push all arguments to stack code
 		$1->code += "\tcall " + $1->name + "\n"; // call the function
-		$1->code += pop_stack + // pop temp vars
-			     	"\tmov ax, " + return_variable + "\n" // store the return value in new temp var for recursion
-					"\tmov " + temp_var + ", ax\n";
+		$1->code += pop_stack; // pop temp vars
+		if($1->return_type != "VOID"){
+			$1->code += "\tmov ax, " + return_variable + "\n" // store the return value in new temp var for recursion
+					    "\tmov " + temp_var + ", ax\n";
+		}
+			     	
 		$1->symbol = temp_var; // store return value in ax,
 		$$ = new vector<SymbolInfo*>({$1, $2});
 		$$ = add_vals($$, $3);
