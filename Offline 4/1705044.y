@@ -173,6 +173,81 @@ void function_code(string func_name, SymbolInfo* func_body, int len_params){
 	func_body->code = code; // set string
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////// PEEPHOLE OPTIMIZATION ////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////
+
+void tokenize(vector<string>* result, string line, string delimiter){
+	result->clear();
+
+	stringstream strstream(line);
+	string temp, temp_handle_stack;
+	int len;
+
+	int i=0; // to track word ptr [bp + x]
+	while(getline(strstream, temp, ' ')){
+		len = temp.length();
+		if(temp[0] == '\t') temp.replace(0, 1, "");
+		if(temp[len-1] == ',') temp.replace(len-1, 1, "");
+		result->push_back(temp);
+		cout<<temp<<endl;
+	}
+}
+
+
+void optimization(string inputname, string outputname){
+	ifstream codein(inputname);
+	ofstream codeout(outputname);
+
+	string line, temp="0", var1, var2;
+	vector<string>* result = new vector<string>();
+	bool redundant_mov = false;
+	while(getline(codein, line)){
+		// tokenize line
+		tokenize(result, line, " ");
+		
+		// checking for redundant mov 
+		if(result->size()>0 && result->at(0) == "mov"){
+			// handle stack moving
+			if(result->size()>3){
+				// if stack loc storing
+				if(result->at(1) == "word"){
+					// word, ptr, [bp, +, 6]
+					result->at(1) = result->at(1) + result->at(2) + result->at(3) + result->at(4) + result->at(5);
+					// location
+					result->at(2) = result->at(6);
+				}
+				// if stack loc loading
+				if(result->at(2) == "word")
+					result->at(2) = result->at(2) + result->at(3) + result->at(4) + result->at(5) + result->at(6);
+			}
+			
+			// if already in this condition and swapped values match
+			if(redundant_mov && var2 == result->at(1) && var1 == result->at(2)){
+				// dont print current and prev line : discard the two lines
+				temp = "0";
+				line = "0";
+				// reset conditions
+				var1 = ""; var2 = ""; redundant_mov = false;
+			}
+			else{ 
+				// if first redundant or prev values dont match then current line redundant check
+				// enable conditions
+				var1 = result->at(1); var2 = result->at(2); redundant_mov = true;
+			 } 
+		}
+		// reset conditions as no mov
+		else { var1 = ""; var2 = ""; redundant_mov = false; } 
+
+		
+		if(temp != "0") codeout<<temp<<endl; // printing the previous line always
+		temp = line;
+	}
+
+	codeout<<temp<<endl; // print last line
+	codein.close();
+	codeout.close();
+}
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////// PARSER FUNCTIONS //////////////////////////////////////////////////////////////////
@@ -300,21 +375,22 @@ void handle_lcurl(){
 		SymbolInfo* temp;
 		bool success;
 		for(int i=0; i<cur_param_list->size(); i++){
-				temp = cur_param_list->at(i);
-				
-				/////// for ICG declared variables /////////////////////////////
-				// NOT USING STACK, STORE IN GLOBAL MEMORY
-				// temp->symbol = temp->name + "_" + to_string(scope_id); // format name_current scope
-				// init_vars += "\t" + temp->symbol + " dw ?\n";	
+			temp = cur_param_list->at(i);
+			
+			/////// for ICG declared variables /////////////////////////////
+			// NOT USING STACK, STORE IN GLOBAL MEMORY
+			// temp->symbol = temp->name + "_" + to_string(scope_id); // format name_current scope
+			// init_vars += "\t" + temp->symbol + " dw ?\n";	
 
-				// USING STACK
-				temp->symbol = param_stack_position(i, cur_param_list->size()-1);
+			// USING STACK
+			temp->symbol = param_stack_position(i, cur_param_list->size()-1);
 
-				success = st->insert(new SymbolInfo(temp));  // TODO : TRACK ALL LIFECYCLES, CALL DESTRUCTOR ON PARAM_LIST IN SYMBOLINFO
-				// if(!success) print_error("Multiple declaration of "+ temp->getName() + " in parameter"); // TODO
-			}
+			success = st->insert(new SymbolInfo(temp));  // TODO : TRACK ALL LIFECYCLES, CALL DESTRUCTOR ON PARAM_LIST IN SYMBOLINFO
+			// if(!success) print_error("Multiple declaration of "+ temp->getName() + " in parameter"); // TODO
+		}
 	}
-	// efficient temps
+
+	// TODO: efficient temp, done when gets lcurl. can this cause any problem 
 	prev_temp_count = temp_count; // save current temp count
 	temp_count = -1; // initialize temp count	
 }
@@ -323,10 +399,9 @@ void handle_lcurl(){
 void handle_rcurl(){
 	st->printAll();
 	st->exitScope();
-
+	
 	// efficient temps
 	temp_count = prev_temp_count; // restore temp count
-	in_main = false; // for ICG main return handle 	
 }
 
 
@@ -423,6 +498,7 @@ void handle_func(SymbolInfo* id, SymbolInfo* return_type, bool define=true){
 		in_function = true;
 		// ICG handle main return
 		if(id->name == "main") in_main = true;
+		// efficient temps
 	}
 }
 
@@ -768,7 +844,8 @@ func_definition :
 		);
 
 		// need cur param list length to check length
-		cur_param_list = nullptr; // clear param for next use						   
+		cur_param_list = nullptr; // clear param for next use
+		in_main = false; // for ICG main return handle 							   
 	}
 	| type_specifier ID LPAREN RPAREN{ handle_func($2, $1->at(0)); } compound_statement
 	{
@@ -786,6 +863,9 @@ func_definition :
 			"func_definition : type_specifier ID LPAREN RPAREN compound_statement",
 			$$
 		);
+
+		// efficient temps
+		in_main = false; // for ICG main return handle 	
 	}
 	| type_specifier ID LPAREN parameter_list error RPAREN{ handle_func($2, $1->at(0)); } compound_statement
 	{
@@ -1518,7 +1598,6 @@ rel_expression	:
 			   label2 + ":\n";
 		$1->at(0)->code += code;
 		$1->at(0)->symbol = temp;
-		
 
 		$$ = $1;
 		$$->push_back($2);
@@ -1748,6 +1827,8 @@ factor	:
 		// get saving variables in stack string for RECURSION
 		string push_stack = "", pop_stack = "", temp_str;
 		// get declared vars
+		// push_stack += "\tpush " + return_variable + "\n";
+		// pop_stack += "\tpop " + return_variable + "\n";
 		for (auto i = init_vars_list->begin(); i != init_vars_list->end(); ++i){
 			temp_str = *i;
 			push_stack += "\tpush " + temp_str + "\n";
@@ -1917,6 +1998,8 @@ int main(int argc,char *argv[])
 	yyin=fp;
 	yyparse();
 	
+	optimization("code.asm", "optimized_code.asm");
+
 	/* cout<<"symbol table:"<<endl; */
 	st->printAll();
 	cout<<"Total lines: "<<line_count<<endl;
