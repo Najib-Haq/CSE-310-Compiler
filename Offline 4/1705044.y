@@ -33,7 +33,7 @@ int label_count = -1; // keep track of labels
 int temp_count = -1; // keep track of temporary variables
 int total_temp_count = -1; // keep track of TOTAL temps : for efficient temps
 int prev_temp_count = -1; // keep track of previous temps : for efficient temps
-bool in_main = false; // check if currently in main function
+string cur_func_name = ""; // check if currently in main function
 
 int scope_id = 0; // keep track of scope for declared variables
 string return_variable = "return_value"; // to get output of return value from a function
@@ -152,25 +152,39 @@ string param_stack_position(int pos, int total){
 // handle function definition code
 void function_code(string func_name, SymbolInfo* func_body, int len_params){
 	string code, ret="";
-	if(len_params>0) ret = to_string(len_params*2); // pop return saved params of stack
+	if(len_params>0) ret = to_string(len_params*2); // pop return saved params of stack, handles void functions too
 
 	if(func_name == "main") {
 		code = "\tmov ax, @data\n\tmov ds, ax\n" + func_body->code + // data segment for main
 			   "\t;dos exit\n\tmov ah, 4ch\n\tint 21h\n"; // return control to dos
 	}
 	else{
-		// push to stack and pop
-		// save di too because of array
+		// save all temp and vars for stack
+		string push_stack = "", pop_stack = "", temp_str;
+		// TODO: no need for return variable right
+		for (auto i = init_vars_list->begin(); i != init_vars_list->end(); ++i){
+			temp_str = *i;
+			push_stack += "\tpush " + temp_str + "\n";
+			pop_stack = "\tpop " + temp_str + "\n" + pop_stack; // add in the end to maintain stack nature
+		} 
+		// get temp vars
+		for(int i=0; i<temp_count+1; i++){
+			push_stack += "\tpush t_" + to_string(i) + "\n";
+			pop_stack = "\tpop t_" + to_string(i) + "\n" + pop_stack;
+		}
+
 		code = "\tpush bp\n" 	// save bp
 			   "\tmov bp, sp\n" + 
-			//    "\tpush ax\n\tpush bx\n\tpush cx\n\tpush dx\n\tpush di\n" + // standard practise
-			   func_body->code; // + 
-			//    "\tpop di\n\tpop dx\n\tpop cx\n\tpop bx\n\tpop ax\n"
-			//    "\tpop bp\n" 	// restore bp
-			//    "\tret " + ret + "\n"; // restore stack and return
-	}
+			   push_stack +  // save values in stack
+			   func_body->code  +
+			   "return_" + cur_func_name + ":\n" + // return label
+			   pop_stack + // pop saved values
+			   "\tpop bp\n"
+			   "\tret " + ret + "\n";
+		}
 	
 	func_body->code = code; // set string
+	temp_count = prev_temp_count; // restore temp count ; done exclusively in func definitions
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////
@@ -368,6 +382,7 @@ void insert_vars(SymbolInfo* id, string type){
 // helper for lcurl and rcurl
 void handle_lcurl(){
 	scope_id += 1; // for ICG variable declaration names
+
 	// enter scope
 	st->enterScope();
 	// insert params if available and this is lcurl of a function
@@ -390,18 +405,18 @@ void handle_lcurl(){
 		}
 	}
 
-	// TODO: efficient temp, done when gets lcurl. can this cause any problem 
-	prev_temp_count = temp_count; // save current temp count
-	temp_count = -1; // initialize temp count	
+	if(in_function){
+		// TODO: efficient temp, done when gets lcurl. can this cause any problem -> yes. problem for recursion functions
+		// so doing this only for a function now
+		prev_temp_count = temp_count; // save current temp count
+		temp_count = -1; // initialize temp count	
+	}
 }
 
 
 void handle_rcurl(){
 	st->printAll();
 	st->exitScope();
-	
-	// efficient temps
-	temp_count = prev_temp_count; // restore temp count
 }
 
 
@@ -497,8 +512,7 @@ void handle_func(SymbolInfo* id, SymbolInfo* return_type, bool define=true){
 		// this enables LCURL action : inserts params if available
 		in_function = true;
 		// ICG handle main return
-		if(id->name == "main") in_main = true;
-		// efficient temps
+		cur_func_name = id->name;
 	}
 }
 
@@ -830,9 +844,7 @@ func_definition :
 		int len_params = 0;
 		if(cur_param_list != nullptr) len_params = cur_param_list->size();
 		function_code($2->name, $7->at(0), len_params);
-		// handle return + stack pop for void functions
-		if($1->at(0)->type == "VOID") $7->at(0)->code += "\tpop bp\n\tret " +  to_string(cur_param_list->size()*2) + "\n";
-		$1->at(0)->code = $2->name + " PROC\n" + $7->at(0)->code + $2->name + " ENDP\n";
+		$1->at(0)->code = $2->name + " proc\n" + $7->at(0)->code + $2->name + " endp\n\n";
 
 		$1->insert($1->end(),  {$2, $3});
 		$$ = add_vals($1, $4);
@@ -845,7 +857,7 @@ func_definition :
 
 		// need cur param list length to check length
 		cur_param_list = nullptr; // clear param for next use
-		in_main = false; // for ICG main return handle 							   
+		cur_func_name = ""; // for ICG main return handle 							   
 	}
 	| type_specifier ID LPAREN RPAREN{ handle_func($2, $1->at(0)); } compound_statement
 	{
@@ -853,9 +865,7 @@ func_definition :
 		in_function = false; // out of function
 
 		function_code($2->name, $6->at(0), 0);
-		// handle return + stack pop for void functions
-		if($1->at(0)->type == "VOID") $6->at(0)->code += "\tpop bp\n\tret " +  to_string(cur_param_list->size()*2) + "\n";
-		$1->at(0)->code = $2->name + " proc\n" + $6->at(0)->code + "\n" + $2->name + " endp\n";
+		$1->at(0)->code = $2->name + " proc\n" + $6->at(0)->code + "\n" + $2->name + " endp\n\n";
 
 		$1->insert($1->end(),  {$2, $3, $4});
 		$$ = add_vals($1, $6);
@@ -865,7 +875,7 @@ func_definition :
 		);
 
 		// efficient temps
-		in_main = false; // for ICG main return handle 	
+		cur_func_name = ""; // for ICG main return handle 	
 	}
 	| type_specifier ID LPAREN parameter_list error RPAREN{ handle_func($2, $1->at(0)); } compound_statement
 	{
@@ -1361,19 +1371,12 @@ statement :
 	| RETURN expression SEMICOLON
 	{
 
-		// TODO : now done using temp val
-		int len = 0;
-		if(cur_param_list != nullptr) len = cur_param_list->size();
 		// no return statement for main
-		if(!in_main){
+		if(cur_func_name != "main"){
 			$1->code = $2->at(0)->code + // get statement
 						"\tmov ax, " + $2->at(0)->symbol + "\n" 
 						"\tmov " + return_variable + ", ax\n" // save return value
-						//    "\tpop di\n\tpop dx\n\tpop cx\n\tpop bx\n\tpop ax\n"
-						"\tpop bp\n" // pop stack values
-						"\tret " +  to_string(len*2) + "\n"; // return -> do this in func def too to handle void
-						// return needs to be here for recursion function
-						// TODO : but a function can have no return too ??
+						"\tjmp return_" + cur_func_name + "\n"; // go to return_{scope_id} label
 		}
 
 		$$ = new vector<SymbolInfo*>({$1});
@@ -1824,27 +1827,12 @@ factor	:
 			delete args;
 		}
 
-		// get saving variables in stack string for RECURSION
-		string push_stack = "", pop_stack = "", temp_str;
-		// get declared vars
-		// push_stack += "\tpush " + return_variable + "\n";
-		// pop_stack += "\tpop " + return_variable + "\n";
-		for (auto i = init_vars_list->begin(); i != init_vars_list->end(); ++i){
-			temp_str = *i;
-			push_stack += "\tpush " + temp_str + "\n";
-			pop_stack = "\tpop " + temp_str + "\n" + pop_stack; // add in the end to maintain stack nature
-		} 
-		// get temp vars
-		for(int i=0; i<temp_count+1; i++){
-			push_stack += "\tpush t_" + to_string(i) + "\n";
-			pop_stack = "\tpop t_" + to_string(i) + "\n" + pop_stack;
-		}
 
 		string temp_var = newTemp();
-		$1->code += push_stack; // push temp vars
+		// $1->code += push_stack; // push temp vars
 		add_code($1, $3->at(0)); // push all arguments to stack code
 		$1->code += "\tcall " + $1->name + "\n"; // call the function
-		$1->code += pop_stack; // pop temp vars
+		// $1->code += pop_stack; // pop temp vars
 		if($1->return_type != "VOID"){
 			$1->code += "\tmov ax, " + return_variable + "\n" // store the return value in new temp var for recursion
 					    "\tmov " + temp_var + ", ax\n";
