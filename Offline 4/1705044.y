@@ -60,10 +60,6 @@ string newTemp(){
 string print_func(){
 	// assumes value to print is saved in register ax
 	return "print PROC\n"
-		//    "\tpush ax\n"
-		//    "\tpush bx\n"  // push the registers
-		//    "\tpush cx\n"  // assuming ax has the printing value
-		//    "\tpush dx\n"
 		   "\t;check neg\n"
 		   "\tcmp ax, 8000H\n" // check if neg
 		   "\tjb positive\n" // if ax<2^15, then positive number
@@ -96,10 +92,6 @@ string print_func(){
 		   "\tint 21h\n" 
 		   "\tmov dl, 0Dh\n" // LR
 		   "\tint 21h\n"
-		//    "\tpop dx\n" // return the appropriate values
-		//    "\tpop cx\n"
-		//    "\tpop bx\n"
-		//    "\tpop ax\n"
 		   "\tret \n"
 		   "print ENDP\n\n";
 }
@@ -252,7 +244,6 @@ void optimization(string inputname, string outputname){
 		}
 		// reset conditions as no mov
 		else { var1 = ""; var2 = ""; redundant_mov = false; } 
-
 		
 		if(temp != "0") codeout<<temp<<endl; // printing the previous line always
 		temp = line;
@@ -1634,15 +1625,19 @@ simple_expression :
 		);
 
         add_code($1->at(0), $3->at(0));
-		string sign = "";
-		if($2->name == "+") sign = "add";
-		else if($2->name == "-") sign = "sub"; 
-		string temp = newTemp();
-		$1->at(0)->code += "\tmov ax, " + $1->at(0)->symbol + "\n"
-						  "\t" + sign + " ax, " + $3->at(0)->symbol + "\n"
-						  "\tmov " + temp + ", ax\n"; // store score in temp variable
-		$1->at(0)->symbol = temp; // store representative variable
 
+		// PEEPHOLE OPTIMIZATION: x+0, x-0 dont do anything
+		if(!($3->size() == 1 && $3->at(0)->name == "0")){
+			string sign = "";
+			if($2->name == "+") sign = "add";
+			else if($2->name == "-") sign = "sub"; 
+			string temp = newTemp();
+			$1->at(0)->code += "\tmov ax, " + $1->at(0)->symbol + "\n"
+							"\t" + sign + " ax, " + $3->at(0)->symbol + "\n"
+							"\tmov " + temp + ", ax\n"; // store score in temp variable
+			$1->at(0)->symbol = temp; // store representative variable
+		}
+		
 
 		$$ = $1;
 		$$->push_back($2);
@@ -1693,29 +1688,36 @@ term :
 		}
 
 		// TODO : signed or unsigned, for some reason -1, -6, .. shows up when x % 5 == 0 instead of 0, -5
-		add_code($1->at(0), $3->at(0));
-		string op, temp = newTemp(), result_reg = "ax";		
-		// set operation
-		if($2->name == "*") op = "\tmul bx\n";
-		else if($2->name == "/" || $2->name == "%") {
-			op = "\t;check negative\n" // if ax is neg then dx must be 0ffffh
-				 "\tcmp ax, 8000h\n"
-				 "\tjb dividend_positive\n"
-				 "\tmov dx, 0fffh\n" // if neg then dx = 0fffh
-				 "\tjmp divop\n"
-				 "dividend_positive:\n"
-				 "\txor dx, dx\n" // if pos then dx = 0000
-				 "divop:\n"
-				 "\tdiv bx\n";
-		}
-		// set destination reg
-		if($2->name == "%") result_reg = "dx";
 		
-		$1->at(0)->code += "\tmov ax, " + $1->at(0)->symbol + "\n"
-					       "\tmov bx, " + $3->at(0)->symbol + "\n" +
-						   op + // * : DX::AX = AX * BX, ||||||  / : AX = DX::AX / BX and DX = DX::AX % BX
-						   "\tmov " + temp + ", " + result_reg + "\n"; 
-		$1->at(0)->symbol = temp;
+		add_code($1->at(0), $3->at(0));
+
+		// PEEPHOLE OPTIMIZATION: x*1, x/1 dont do anything
+		if(!($3->size() == 1 && $3->at(0)->name == "1")){
+			string op, temp = newTemp(), result_reg = "ax", label1 = newLabel(), label2 = newLabel();
+			// set operation
+			if($2->name == "*") op = "\tmul bx\n";
+			else if($2->name == "/" || $2->name == "%") {
+				op = "\t;check negative\n" // if ax is neg then dx must be 0ffffh
+					"\tcmp ax, 8000h\n"
+					"\t;divident positive\n"
+					"\tjb " + label1 + "\n"
+					"\tmov dx, 0fffh\n" // if neg then dx = 0fffh
+					"\t;div operaiton\n"
+					"\tjmp " + label2 + "\n" +
+					label1 +":\n"
+					"\txor dx, dx\n" + // if pos then dx = 0000
+					label2 + ":\n"
+					"\tdiv bx\n";
+			}
+			// set destination reg
+			if($2->name == "%") result_reg = "dx";
+			
+			$1->at(0)->code += "\tmov ax, " + $1->at(0)->symbol + "\n"
+							"\tmov bx, " + $3->at(0)->symbol + "\n" +
+							op + // * : DX::AX = AX * BX, ||||||  / : AX = DX::AX / BX and DX = DX::AX % BX
+							"\tmov " + temp + ", " + result_reg + "\n"; 
+			$1->at(0)->symbol = temp;
+		}
 
 		$$ = $1;
 		$$->push_back($2);
@@ -1746,6 +1748,7 @@ unary_expression :
 					   "\tmov " + temp + ", ax\n";
 			$1->symbol = temp;
 		}
+		else $1->symbol = $2->at(0)->symbol; // get symbol for '+'
 
 		$$ = new vector<SymbolInfo*>({$1});
 		$$ = add_vals($$, $2);
@@ -1762,11 +1765,22 @@ unary_expression :
 			$2->at(0)->return_type
 		);
 
+		string temp = newTemp(), label1 = newLabel(), label2 = newLabel(), label3 = newLabel();
 		$1->code = $2->at(0)->code + 
 				   "\tmov ax, " + $2->at(0)->symbol + "\n" + 
-				   "\tnot ax\n" + 
-				   "\tmov " + newTemp() + ", ax\n";
- 
+				   "\tcmp ax, 0\n" // compare with 0
+				   "\tje " + label1 + "\n"
+				   "\tjmp " + label2 + "\n" +
+				   label1 + ":\n"
+				   "\t; if ax==0 then ax=1\n"
+				   "\tmov " + temp + ", 1\n"
+				   "\tjmp " + label3 + "\n" + 
+				   label2 + ":\n"
+				   "\t; if ax==1 then ax=0\n"
+				   "\tmov " + temp + ", 0\n" +
+				   label3 + ":\n";
+		$1->symbol = temp;
+
 		$$ = new vector<SymbolInfo*>({$1});
 		$$ = add_vals($$, $2);
 		rule_match(
@@ -1830,7 +1844,8 @@ factor	:
 
 		string temp_var = newTemp();
 		// $1->code += push_stack; // push temp vars
-		add_code($1, $3->at(0)); // push all arguments to stack code
+		// if there are function calls without params
+		if($3->size() != 0) add_code($1, $3->at(0)); // push all arguments to stack code
 		$1->code += "\tcall " + $1->name + "\n"; // call the function
 		// $1->code += pop_stack; // pop temp vars
 		if($1->return_type != "VOID"){
