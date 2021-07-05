@@ -28,7 +28,7 @@ string var_type = "-100"; // to store type of variables in declaration_list to m
 ////////////////////////////// ICG VARIABLES AND FUNCTIONS ///////////////////////////////////////////////////////
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
-ofstream fasm("code.asm");
+// ofstream fasm("code.asm");
 int label_count = -1; // keep track of labels
 int temp_count = -1; // keep track of temporary variables
 int total_temp_count = -1; // keep track of TOTAL temps : for efficient temps
@@ -97,7 +97,12 @@ string print_func(){
 
 // generate ICG
 void ICG(string code){
-	// ofstream fasm("code.asm");
+	ofstream fasm("code.asm");
+	// if error then blank code
+	// if(error_count>0){
+	// 	fasm.close();
+	// 	return;
+	// }
 
 	// initialize
 	string initiate = ".MODEL small\n"
@@ -179,6 +184,21 @@ void function_code(string func_name, SymbolInfo* func_body, int len_params){
 	func_body->code = code; // set string
 	temp_count = prev_temp_count; // restore temp count ; done exclusively in func definitions
 }
+
+string use_prev_temp(SymbolInfo* s1, SymbolInfo* s2){
+	// for cases like a + b + c / a * b *c 
+	// if symbol1 is a temp and not an array then use that
+	if((s1->symbol.find("t_") == 0) && (s1->value_type != "ARRAY")){
+		return s1->symbol;
+	}
+	// else if symbol2 is a temp and not an array then use that
+	else if((s2->symbol.find("t_") == 0) && (s2->value_type != "ARRAY")){
+		return s2->symbol;
+	}
+	// else create new temp
+	else return newTemp();
+}
+
 
 ////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////// PEEPHOLE OPTIMIZATION ////////////////////////////////////////
@@ -503,8 +523,7 @@ void handle_func(SymbolInfo* id, SymbolInfo* return_type, bool define=true){
 		cur_func_name = id->name;
 
 
-		// TODO: efficient temp, done when gets lcurl. can this cause any problem -> yes. problem for recursion functions
-		// so doing this only for a function now
+		// efficient temp, reinitiate for a function
 		prev_temp_count = temp_count; // save current temp count
 		temp_count = -1; // initialize temp count	
 		init_vars_list = new vector<string>(); // get variables of this function scope only
@@ -853,7 +872,8 @@ func_definition :
 		// need cur param list length to check length
 		cur_param_list = nullptr; // clear param for next use
 		cur_func_name = ""; // for ICG main return handle
-		delete init_vars_list; // reinitialize variable list					   
+		delete init_vars_list; // reinitialize variable list		
+		init_vars_list = nullptr;			   
 	}
 	| type_specifier ID LPAREN RPAREN{ handle_func($2, $1->at(0)); } compound_statement
 	{
@@ -871,7 +891,8 @@ func_definition :
 
 		// efficient temps
 		cur_func_name = ""; // for ICG main return handle
-		delete init_vars_list;  // reinitialize variable list		
+		delete init_vars_list;  // reinitialize variable list	
+		init_vars_list = nullptr;	
 	}
 	| type_specifier ID LPAREN parameter_list error RPAREN{ handle_func($2, $1->at(0)); } compound_statement
 	{
@@ -1527,7 +1548,8 @@ logic_expression :
 		);
 
 		add_code($1->at(0), $3->at(0));
-		string label1 = newLabel(), label2 = newLabel(), temp = newTemp(), code = ""; 
+		string label1 = newLabel(), label2 = newLabel(), code = ""; 
+		string temp = use_prev_temp($1->at(0), $3->at(0)); // newTemp()
 		if($2->name == "&&"){
 			code = "\tcmp " + $1->at(0)->symbol + ", 0\n" // compare 1st element to 0
 				   "\tje " + label1 + "\n" // if yes then go to label1
@@ -1586,7 +1608,8 @@ rel_expression	:
 		);
 
 		add_code($1->at(0), $3->at(0));
-		string label1 = newLabel(), label2 = newLabel(), temp = newTemp(), code = "";
+		string label1 = newLabel(), label2 = newLabel(), code = "";
+		string temp =  newTemp();
 		code = "\tmov ax, " + $1->at(0)->symbol + "\n" 			// move L.H.S to ax reg
 			   "\tcmp ax, " + $3->at(0)->symbol + "\n" +        // compare L.H.S and R.H.S
 			   "\t" + get_relop_command($2->name) + " " + label1 + "\n" // if (false) jump to label1
@@ -1630,11 +1653,18 @@ simple_expression :
 		);
 
 		// PEEPHOLE OPTIMIZATION: x+0, x-0 dont do anything
-		if(!($3->size() == 1 && $3->at(0)->name == "0")){
+		// if $1 is 0 then propagate $3 values 
+		if($1->size() == 1 && $1->at(0)->name == "0") {
+			$1->at(0)->code = $3->at(0)->code;
+			$1->at(0)->symbol = $3->at(0)->symbol;
+		}
+		// if $3 is 0 then propagate $1 values 
+		else if($3->size() == 1 && $3->at(0)->name == "0") {}
+		else{
 			string sign = "";
 			if($2->name == "+") sign = "add";
 			else if($2->name == "-") sign = "sub"; 
-			string temp = newTemp();
+			string temp = use_prev_temp($1->at(0), $3->at(0)); // newTemp()
 			$1->at(0)->code += $3->at(0)->code + // need to add here for array
 							   "\tmov ax, " + $1->at(0)->symbol + "\n"
 							   "\t" + sign + " ax, " + $3->at(0)->symbol + "\n"
@@ -1694,8 +1724,16 @@ term :
 		// TODO : signed or unsigned, for some reason -1, -6, .. shows up when x % 5 == 0 instead of 0, -5
 
 		// PEEPHOLE OPTIMIZATION: x*1, x/1 dont do anything
-		if(!($3->size() == 1 && $3->at(0)->name == "1")){
-			string op, temp = newTemp(), result_reg = "ax", label1 = newLabel(), label2 = newLabel();
+		// if $1 is 0 then propagate $3 values 
+		if($1->size() == 1 && $1->at(0)->name == "1") {
+			$1->at(0)->code = $3->at(0)->code;
+			$1->at(0)->symbol = $3->at(0)->symbol;
+		}
+		// if $3 is 0 then propagate $1 values 
+		else if($3->size() == 1 && $3->at(0)->name == "1") {}
+		else{
+			string op, result_reg = "ax", label1 = newLabel(), label2 = newLabel();
+			string temp = use_prev_temp($1->at(0), $3->at(0)); // newTemp()
 			// set operation
 			if($2->name == "*") op = "\tmul bx\n";
 			else if($2->name == "/" || $2->name == "%") {

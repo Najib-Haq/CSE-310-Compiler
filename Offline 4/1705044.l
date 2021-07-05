@@ -96,7 +96,7 @@ double              {return output(DOUBLE, "DOUBLE", yytext);}
 return              {return output(RETURN, "RETURN", yytext);}
 case                {return output(CASE, "CASE", yytext);}
 continue            {return output(CONTINUE, "CONTINUE", yytext);}	
-printf              {return output(PRINTLN, "PRINTLN", yytext);}	
+println              {return output(PRINTLN, "PRINTLN", yytext);}	
 					/* ///////////////////////////////////////// KEYWORDS END */
 
 
