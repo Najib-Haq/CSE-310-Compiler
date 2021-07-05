@@ -36,9 +36,8 @@ int prev_temp_count = -1; // keep track of previous temps : for efficient temps
 string cur_func_name = ""; // check if currently in main function
 
 int scope_id = 0; // keep track of scope for declared variables
-string return_variable = "return_value"; // to get output of return value from a function
-string init_vars = "\t" + return_variable + " dw ?\n"; // string to keep track of variable initializations
-vector<string>* init_vars_list = new vector<string>(); // to keep track of all variables -> specially needed for function call
+vector<string>* init_vars_list; // to keep track of function variables -> specially needed for function call
+string init_vars = ""; // store variables
 
 string newLabel(){
 	label_count += 1;
@@ -153,12 +152,14 @@ void function_code(string func_name, SymbolInfo* func_body, int len_params){
 	else{
 		// save all temp and vars for stack
 		string push_stack = "", pop_stack = "", temp_str;
-		// TODO: no need for return variable right
+
+		// saving function variables
 		for (auto i = init_vars_list->begin(); i != init_vars_list->end(); ++i){
 			temp_str = *i;
 			push_stack += "\tpush " + temp_str + "\n";
 			pop_stack = "\tpop " + temp_str + "\n" + pop_stack; // add in the end to maintain stack nature
 		} 
+
 		// get temp vars
 		for(int i=0; i<temp_count+1; i++){
 			push_stack += "\tpush t_" + to_string(i) + "\n";
@@ -196,12 +197,13 @@ void tokenize(vector<string>* result, string line, string delimiter){
 		if(temp[0] == '\t') temp.replace(0, 1, "");
 		if(temp[len-1] == ',') temp.replace(len-1, 1, "");
 		result->push_back(temp);
-		cout<<temp<<endl;
+		// cout<<temp<<endl;
 	}
 }
 
 
 void optimization(string inputname, string outputname){
+	// TODO : revamp opt
 	ifstream codein(inputname);
 	ofstream codeout(outputname);
 
@@ -212,6 +214,9 @@ void optimization(string inputname, string outputname){
 		// tokenize line
 		tokenize(result, line, " ");
 		
+		// TODO : handle comment in between this
+		// result->size()>0 && result->at(0).at(0) == ';'
+
 		// checking for redundant mov 
 		if(result->size()>0 && result->at(0) == "mov"){
 			// handle stack moving
@@ -230,8 +235,7 @@ void optimization(string inputname, string outputname){
 			
 			// if already in this condition and swapped values match
 			if(redundant_mov && var2 == result->at(1) && var1 == result->at(2)){
-				// dont print current and prev line : discard the two lines
-				temp = "0";
+				// dont print current : discard the  lines
 				line = "0";
 				// reset conditions
 				var1 = ""; var2 = ""; redundant_mov = false;
@@ -395,13 +399,6 @@ void handle_lcurl(){
 			// if(!success) print_error("Multiple declaration of "+ temp->getName() + " in parameter"); // TODO
 		}
 	}
-
-	if(in_function){
-		// TODO: efficient temp, done when gets lcurl. can this cause any problem -> yes. problem for recursion functions
-		// so doing this only for a function now
-		prev_temp_count = temp_count; // save current temp count
-		temp_count = -1; // initialize temp count	
-	}
 }
 
 
@@ -504,6 +501,13 @@ void handle_func(SymbolInfo* id, SymbolInfo* return_type, bool define=true){
 		in_function = true;
 		// ICG handle main return
 		cur_func_name = id->name;
+
+
+		// TODO: efficient temp, done when gets lcurl. can this cause any problem -> yes. problem for recursion functions
+		// so doing this only for a function now
+		prev_temp_count = temp_count; // save current temp count
+		temp_count = -1; // initialize temp count	
+		init_vars_list = new vector<string>(); // get variables of this function scope only
 	}
 }
 
@@ -848,13 +852,13 @@ func_definition :
 
 		// need cur param list length to check length
 		cur_param_list = nullptr; // clear param for next use
-		cur_func_name = ""; // for ICG main return handle 							   
+		cur_func_name = ""; // for ICG main return handle
+		delete init_vars_list; // reinitialize variable list					   
 	}
 	| type_specifier ID LPAREN RPAREN{ handle_func($2, $1->at(0)); } compound_statement
 	{
 		// error handling : handle_func errors
 		in_function = false; // out of function
-
 		function_code($2->name, $6->at(0), 0);
 		$1->at(0)->code = $2->name + " proc\n" + $6->at(0)->code + "\n" + $2->name + " endp\n\n";
 
@@ -866,7 +870,8 @@ func_definition :
 		);
 
 		// efficient temps
-		cur_func_name = ""; // for ICG main return handle 	
+		cur_func_name = ""; // for ICG main return handle
+		delete init_vars_list;  // reinitialize variable list		
 	}
 	| type_specifier ID LPAREN parameter_list error RPAREN{ handle_func($2, $1->at(0)); } compound_statement
 	{
@@ -1097,7 +1102,7 @@ declaration_list :
 
 		$3->symbol = $3->name + "_" + to_string(scope_id); // format name_current scope
 		init_vars += "\t" + $3->symbol + " dw ?\n";	
-		init_vars_list->push_back($3->symbol);
+		if(init_vars_list != nullptr) init_vars_list->push_back($3->symbol);
 
 		$$ = add_vals($1, new vector<SymbolInfo*>({$2, $3}));
 		insert_vars($3, var_type); 
@@ -1110,7 +1115,7 @@ declaration_list :
 		
 		$3->symbol = $3->name + "_" + to_string(scope_id); // format name_current scope
 		init_vars += "\t" + $3->symbol + " dw " + $5->name + " dup(?)\n";
-		init_vars_list->push_back($3->symbol);
+		if(init_vars_list != nullptr) init_vars_list->push_back($3->symbol);
 
 		$$ = add_vals($1, new vector<SymbolInfo*>(
 			{$2, $3, $4, $5, $6}
@@ -1128,7 +1133,7 @@ declaration_list :
 
 		$1->symbol = $1->name + "_" + to_string(scope_id); // format name_current scope
 		init_vars += "\t" + $1->symbol + " dw ?\n";
-		init_vars_list->push_back($1->symbol);
+		if(init_vars_list != nullptr) init_vars_list->push_back($1->symbol);
 
 		$$ = new vector<SymbolInfo*>({$1});
 		insert_vars($1, var_type);  
@@ -1141,7 +1146,7 @@ declaration_list :
 
 		$1->symbol = $1->name + "_" + to_string(scope_id); // format name_current scope
 		init_vars += "\t" + $1->symbol + " dw " + $3->name + " dup(?)\n";
-		init_vars_list->push_back($1->symbol);
+		if(init_vars_list != nullptr) init_vars_list->push_back($1->symbol);
 
 		$$ = new vector<SymbolInfo*>({$1, $2, $3, $4}); 
 		insert_vars($1, var_type); 
@@ -1365,8 +1370,7 @@ statement :
 		// no return statement for main
 		if(cur_func_name != "main"){
 			$1->code = $2->at(0)->code + // get statement
-						"\tmov ax, " + $2->at(0)->symbol + "\n" 
-						"\tmov " + return_variable + ", ax\n" // save return value
+						"\tmov ax, " + $2->at(0)->symbol + "\n" // return value is saved in ax
 						"\tjmp return_" + cur_func_name + "\n"; // go to return_{scope_id} label
 		}
 
@@ -1624,17 +1628,16 @@ simple_expression :
 			"" //"Incompatible type in ADDOP"
 		);
 
-        add_code($1->at(0), $3->at(0));
-
 		// PEEPHOLE OPTIMIZATION: x+0, x-0 dont do anything
 		if(!($3->size() == 1 && $3->at(0)->name == "0")){
 			string sign = "";
 			if($2->name == "+") sign = "add";
 			else if($2->name == "-") sign = "sub"; 
 			string temp = newTemp();
-			$1->at(0)->code += "\tmov ax, " + $1->at(0)->symbol + "\n"
-							"\t" + sign + " ax, " + $3->at(0)->symbol + "\n"
-							"\tmov " + temp + ", ax\n"; // store score in temp variable
+			$1->at(0)->code += $3->at(0)->code + // need to add here for array
+							   "\tmov ax, " + $1->at(0)->symbol + "\n"
+							   "\t" + sign + " ax, " + $3->at(0)->symbol + "\n"
+							   "\tmov " + temp + ", ax\n"; // store score in temp variable
 			$1->at(0)->symbol = temp; // store representative variable
 		}
 		
@@ -1688,8 +1691,6 @@ term :
 		}
 
 		// TODO : signed or unsigned, for some reason -1, -6, .. shows up when x % 5 == 0 instead of 0, -5
-		
-		add_code($1->at(0), $3->at(0));
 
 		// PEEPHOLE OPTIMIZATION: x*1, x/1 dont do anything
 		if(!($3->size() == 1 && $3->at(0)->name == "1")){
@@ -1712,10 +1713,11 @@ term :
 			// set destination reg
 			if($2->name == "%") result_reg = "dx";
 			
-			$1->at(0)->code += "\tmov ax, " + $1->at(0)->symbol + "\n"
-							"\tmov bx, " + $3->at(0)->symbol + "\n" +
-							op + // * : DX::AX = AX * BX, ||||||  / : AX = DX::AX / BX and DX = DX::AX % BX
-							"\tmov " + temp + ", " + result_reg + "\n"; 
+			$1->at(0)->code += $3->at(0)->code +
+							  "\tmov bx, " + $3->at(0)->symbol + "\n"
+							  "\tmov ax, " + $1->at(0)->symbol + "\n" +
+							  op + // * : DX::AX = AX * BX, ||||||  / : AX = DX::AX / BX and DX = DX::AX % BX
+							  "\tmov " + temp + ", " + result_reg + "\n"; 
 			$1->at(0)->symbol = temp;
 		}
 
@@ -1802,6 +1804,13 @@ unary_expression :
 factor	: 
 	variable 
 	{
+		if($1->at(0)->value_type == "ARRAY"){
+			string temp = newTemp();
+			$1->at(0)->code += "\tmov ax, " + $1->at(0)->symbol + "\n"
+							   "\tmov " + temp + ", ax\n";
+			$1->at(0)->symbol = temp;
+		}
+
 		$$ = $1;
 		rule_match(
 			"factor : variable",
@@ -1843,15 +1852,20 @@ factor	:
 
 
 		string temp_var = newTemp();
-		// $1->code += push_stack; // push temp vars
+
 		// if there are function calls without params
 		if($3->size() != 0) add_code($1, $3->at(0)); // push all arguments to stack code
 		$1->code += "\tcall " + $1->name + "\n"; // call the function
-		// $1->code += pop_stack; // pop temp vars
+
+		// if return type is not void then push ax, get return value from ax, pop ax
 		if($1->return_type != "VOID"){
-			$1->code += "\tmov ax, " + return_variable + "\n" // store the return value in new temp var for recursion
-					    "\tmov " + temp_var + ", ax\n";
-		}
+			$1->code = "\tpush ax\n" // store ax -> needed for recursion
+					   "\tpush di\n" + // for array
+					   $1->code + 
+					   "\tmov " + temp_var + ", ax\n" // store the return value in new temp var for recursion
+					   "\tpop di\n"
+					   "\tpop ax\n"; // restore ax
+		}	
 			     	
 		$1->symbol = temp_var; // store return value in ax,
 		$$ = new vector<SymbolInfo*>({$1, $2});
