@@ -254,8 +254,6 @@ void optimization(string inputname, string outputname){
 		if(line != "0") codeout<<line<<endl; // printing the previous line always
 		temp = line;
 	}
-
-	codeout<<temp<<endl; // print last line
 	codein.close();
 	codeout.close();
 }
@@ -297,7 +295,6 @@ string print_vals(vector<SymbolInfo*>* vals){
 			value = value + "\n\n";
 			all_vals += " ";
 		}
-
 		cout<<value;
 	}
 	cout<<endl<<endl;
@@ -1493,7 +1490,8 @@ variable :
 			);
 		}
 
-		$1->at(0)->code += $3->at(0)->code + \
+		$1->at(0)->code = $3->at(0)->code + 
+						  $1->at(0)->code + // handle array assignment by placing it afterwards
 						   "\tmov ax, " + $3->at(0)->symbol + "\n"
 						   "\tmov " + $1->at(0)->symbol + ", ax\n";
 
@@ -1744,7 +1742,6 @@ unary_expression :
 			$2->at(0)->return_type
 		);
 
-		// TODO : checking for negative number here. anything else?
 		string temp = newTemp();
 		if($1->name == "-") {
 			$1->code = $2->at(0)->code + 
@@ -1753,7 +1750,7 @@ unary_expression :
 					   "\tmov " + temp + ", ax\n";
 			$1->symbol = temp;
 		}
-		else $1->symbol = $2->at(0)->symbol; // get symbol for '+'
+		else $1->symbol = $2->at(0)->symbol; // get symbol for case '+'
 
 		$$ = new vector<SymbolInfo*>({$1});
 		$$ = add_vals($$, $2);
