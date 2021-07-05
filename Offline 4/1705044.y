@@ -201,13 +201,12 @@ void tokenize(vector<string>* result, string line, string delimiter){
 	}
 }
 
-
 void optimization(string inputname, string outputname){
 	// TODO : revamp opt
 	ifstream codein(inputname);
 	ofstream codeout(outputname);
 
-	string line, temp="0", var1, var2;
+	string line, temp, var1, var2;
 	vector<string>* result = new vector<string>();
 	bool redundant_mov = false;
 	while(getline(codein, line)){
@@ -215,7 +214,10 @@ void optimization(string inputname, string outputname){
 		tokenize(result, line, " ");
 		
 		// TODO : handle comment in between this
-		// result->size()>0 && result->at(0).at(0) == ';'
+		if(result->size()>0 && result->at(0).at(0) == ';'){
+			codeout<<line<<endl;
+			continue;
+		}
 
 		// checking for redundant mov 
 		if(result->size()>0 && result->at(0) == "mov"){
@@ -249,7 +251,7 @@ void optimization(string inputname, string outputname){
 		// reset conditions as no mov
 		else { var1 = ""; var2 = ""; redundant_mov = false; } 
 		
-		if(temp != "0") codeout<<temp<<endl; // printing the previous line always
+		if(line != "0") codeout<<line<<endl; // printing the previous line always
 		temp = line;
 	}
 
@@ -257,6 +259,7 @@ void optimization(string inputname, string outputname){
 	codein.close();
 	codeout.close();
 }
+
 
 //////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////// PARSER FUNCTIONS //////////////////////////////////////////////////////////////////
