@@ -10,4 +10,4 @@ echo '4'
 g++ SymbolTable.cpp -c
 g++ SymbolTable.o y.o l.o -lfl
 echo '5'
-./a.out input.c
+./a.out $1
